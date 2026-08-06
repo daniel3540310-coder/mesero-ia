@@ -15,7 +15,15 @@ export async function askRestaurantAssistant(
   });
 
   if (error) {
-    throw new Error(error.message ?? "No se pudo contactar al asistente.");
+    // FunctionsHttpError trae siempre el mismo mensaje genérico
+    // ("Edge Function returned a non-2xx status code"); el motivo real
+    // viene en el body de la respuesta, en error.context.
+    const context = (error as { context?: Response }).context;
+    const detail = await context?.clone().json().then(
+      (body: { error?: string }) => body.error,
+      () => undefined
+    );
+    throw new Error(detail ?? error.message ?? "No se pudo contactar al asistente.");
   }
 
   return data.reply as string;
