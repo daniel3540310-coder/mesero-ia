@@ -5,11 +5,16 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface AssistantReply {
+  reply: string;
+  productIds: string[];
+}
+
 export async function askRestaurantAssistant(
   qrToken: string,
   message: string,
   history: ChatMessage[]
-): Promise<string> {
+): Promise<AssistantReply> {
   const { data, error } = await supabase.functions.invoke("gemini-chat", {
     body: { qrToken, message, history },
   });
@@ -26,5 +31,5 @@ export async function askRestaurantAssistant(
     throw new Error(detail ?? error.message ?? "No se pudo contactar al asistente.");
   }
 
-  return data.reply as string;
+  return { reply: data.reply as string, productIds: (data.productIds as string[]) ?? [] };
 }

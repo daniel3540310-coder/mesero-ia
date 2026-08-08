@@ -86,6 +86,17 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           system_instruction: { parts: [{ text: systemPrompt }] },
           contents,
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                reply: { type: "STRING" },
+                productIds: { type: "ARRAY", items: { type: "STRING" } },
+              },
+              required: ["reply"],
+            },
+          },
         }),
       }
     );
@@ -97,11 +108,26 @@ Deno.serve(async (req) => {
     }
 
     const data = await response.json();
-    const reply: string =
+    const rawText: string =
       data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ??
-      "No tengo una respuesta para eso en este momento.";
+      "";
 
-    return jsonResponse({ reply });
+    let reply = "No tengo una respuesta para eso en este momento.";
+    let productIds: string[] = [];
+    try {
+      const parsed = JSON.parse(rawText) as { reply?: string; productIds?: string[] };
+      if (parsed.reply) reply = parsed.reply;
+      if (Array.isArray(parsed.productIds)) {
+        const validIds = new Set((products ?? []).map((p) => p.id));
+        productIds = parsed.productIds.filter((id) => validIds.has(id));
+      }
+    } catch {
+      // Si el modelo no devolvió JSON válido (raro con responseSchema, pero
+      // por si acaso), se usa el texto crudo como respuesta sin imágenes.
+      if (rawText) reply = rawText;
+    }
+
+    return jsonResponse({ reply, productIds });
   } catch (err) {
     console.error(err);
     return jsonResponse({ error: "Error interno del asistente." }, 500);
@@ -143,7 +169,7 @@ function buildSystemPrompt(input: PromptInput): string {
         const modifiable = p.ingredients.filter((i) => i.is_modifiable).map((i) => i.name);
         const allergens = p.ingredients.filter((i) => i.is_allergen).map((i) => i.name);
         return [
-          `- ${p.name} ($${p.price}): ${p.description ?? ""}`,
+          `- [id:${p.id}] ${p.name} ($${p.price}): ${p.description ?? ""}`,
           ingredientNames ? `  Ingredientes: ${ingredientNames}` : null,
           modifiable.length ? `  Se puede quitar: ${modifiable.join(", ")}` : null,
           allergens.length ? `  Alérgenos: ${allergens.join(", ")}` : null,
@@ -180,5 +206,9 @@ REGLAS ESTRICTAS:
 - Nunca inventes platillos, precios, promociones ni políticas que no estén aquí.
 - Nunca prometas algo que el restaurante no haya autorizado explícitamente.
 - Si no sabes algo, dilo claramente y sugiere preguntar a un mesero humano.
-- Sé breve, amable y útil. No reemplazas al restaurante, lo representas.`;
+- Sé breve, amable y útil. No reemplazas al restaurante, lo representas.
+- Cada platillo del menú tiene un [id:...]. Cuando recomiendes o menciones un
+  platillo específico, incluye su id en "productIds" para que el cliente vea
+  su foto. No incluyas ids de platillos que no mencionaste. El texto de
+  "reply" nunca debe mostrar el id en crudo al cliente.`;
 }

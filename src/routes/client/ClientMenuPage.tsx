@@ -226,7 +226,7 @@ export function ClientMenuPage() {
         </div>
       ) : (
         <div className="mx-auto h-[70vh] max-w-2xl">
-          <ChatWidget qrToken={qrToken!} />
+          <ChatWidget qrToken={qrToken!} products={products} />
         </div>
       )}
 
