@@ -127,6 +127,7 @@ export function ClientMenuPage() {
           product_id: line.product.id,
           quantity: line.quantity,
           removed_ingredients: line.removedIngredients,
+          notes: line.notes || null,
         }))
       );
 

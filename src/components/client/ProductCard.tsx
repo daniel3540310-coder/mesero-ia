@@ -5,6 +5,7 @@ export interface CartAddition {
   product: Product;
   quantity: number;
   removedIngredients: string[];
+  notes: string;
 }
 
 export function ProductCard({
@@ -18,6 +19,7 @@ export function ProductCard({
 }) {
   const [open, setOpen] = useState(false);
   const [removed, setRemoved] = useState<string[]>([]);
+  const [notes, setNotes] = useState("");
   const modifiable = ingredients.filter((i) => i.is_modifiable);
   const allergens = ingredients.filter((i) => i.is_allergen);
 
@@ -26,8 +28,9 @@ export function ProductCard({
   }
 
   function handleAdd() {
-    onAdd({ product, quantity: 1, removedIngredients: removed });
+    onAdd({ product, quantity: 1, removedIngredients: removed, notes: notes.trim() });
     setRemoved([]);
+    setNotes("");
     setOpen(false);
   }
 
@@ -82,6 +85,18 @@ export function ProductCard({
                 </div>
               </div>
             )}
+            <div>
+              <label className="mb-1 block text-xs font-medium text-neutral-600">
+                Notas o especificaciones (opcional):
+              </label>
+              <input
+                type="text"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Ej. término medio, sin hielo…"
+                className="w-full rounded-lg border border-neutral-300 px-2 py-1.5 text-sm"
+              />
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={() => setOpen(false)}

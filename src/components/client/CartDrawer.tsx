@@ -47,6 +47,9 @@ export function CartDrawer({
                     Sin {line.removedIngredients.join(", ")}
                   </p>
                 )}
+                {line.notes && (
+                  <p className="text-xs text-neutral-500">Nota: {line.notes}</p>
+                )}
                 <p className="text-xs text-neutral-500">
                   ${(line.product.price * line.quantity).toFixed(2)}
                 </p>
@@ -70,7 +73,7 @@ export function CartDrawer({
             disabled={lines.length === 0 || confirming}
             className="w-full rounded-lg bg-brand-600 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
           >
-            {confirming ? "Enviando…" : "Confirmar pedido"}
+            {confirming ? "Ordenando…" : "Ordenar"}
           </button>
         </div>
       </div>
