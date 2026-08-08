@@ -149,13 +149,19 @@ export function ChatWidget({
                     ))}
                   </ul>
                   <p className="mb-2 text-sm font-medium">Total: ${total.toFixed(2)}</p>
-                  <button
-                    onClick={() => handleOrder(i, m.orderItems!)}
-                    disabled={m.ordered || ordering === i}
-                    className="w-full rounded-lg bg-brand-600 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
-                  >
-                    {m.ordered ? "Pedido enviado ✓" : ordering === i ? "Ordenando…" : "Ordenar"}
-                  </button>
+                  {m.ordered ? (
+                    <div className="flex items-center justify-center gap-2 rounded-lg bg-green-100 py-1.5 text-sm font-medium text-green-700">
+                      <span className="text-base">✅</span> Pedido enviado a cocina
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => handleOrder(i, m.orderItems!)}
+                      disabled={ordering === i}
+                      className="w-full rounded-lg bg-brand-600 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
+                    >
+                      {ordering === i ? "Ordenando…" : "Ordenar"}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

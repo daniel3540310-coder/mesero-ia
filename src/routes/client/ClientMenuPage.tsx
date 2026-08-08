@@ -129,8 +129,6 @@ export function ClientMenuPage() {
       }))
     );
     if (itemsError) throw itemsError;
-
-    setConfirmed(true);
   }
 
   async function handleConfirmOrder() {
@@ -140,12 +138,16 @@ export function ClientMenuPage() {
       await submitOrder(cart);
       setCart([]);
       setCartOpen(false);
+      setConfirmed(true);
     } finally {
       setConfirming(false);
     }
   }
 
   async function handleOrderFromChat(lines: CartLine[]) {
+    // A diferencia del carrito, un pedido hecho por chat NO saca al cliente
+    // a la pantalla completa de confirmación — se queda conversando; el
+    // ChatWidget muestra su propia palomita en el mensaje.
     await submitOrder(lines);
   }
 
