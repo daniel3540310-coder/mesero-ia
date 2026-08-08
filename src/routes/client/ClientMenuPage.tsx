@@ -110,33 +110,43 @@ export function ClientMenuPage() {
     setCart((prev) => prev.filter((l) => l.key !== key));
   }
 
+  async function submitOrder(lines: CartLine[]) {
+    if (!restaurant || !table || lines.length === 0) return;
+    const { data: order, error: orderError } = await supabase
+      .from("orders")
+      .insert({ restaurant_id: restaurant.id, table_id: table.id, status: "pendiente" })
+      .select()
+      .single();
+    if (orderError) throw orderError;
+
+    const { error: itemsError } = await supabase.from("order_items").insert(
+      lines.map((line) => ({
+        order_id: order.id,
+        product_id: line.product.id,
+        quantity: line.quantity,
+        removed_ingredients: line.removedIngredients,
+        notes: line.notes || null,
+      }))
+    );
+    if (itemsError) throw itemsError;
+
+    setConfirmed(true);
+  }
+
   async function handleConfirmOrder() {
-    if (!restaurant || !table || cart.length === 0) return;
+    if (cart.length === 0) return;
     setConfirming(true);
     try {
-      const { data: order, error: orderError } = await supabase
-        .from("orders")
-        .insert({ restaurant_id: restaurant.id, table_id: table.id, status: "pendiente" })
-        .select()
-        .single();
-      if (orderError) throw orderError;
-
-      await supabase.from("order_items").insert(
-        cart.map((line) => ({
-          order_id: order.id,
-          product_id: line.product.id,
-          quantity: line.quantity,
-          removed_ingredients: line.removedIngredients,
-          notes: line.notes || null,
-        }))
-      );
-
+      await submitOrder(cart);
       setCart([]);
       setCartOpen(false);
-      setConfirmed(true);
     } finally {
       setConfirming(false);
     }
+  }
+
+  async function handleOrderFromChat(lines: CartLine[]) {
+    await submitOrder(lines);
   }
 
   if (loading) {
@@ -226,7 +236,7 @@ export function ClientMenuPage() {
         </div>
       ) : (
         <div className="mx-auto h-[70vh] max-w-2xl">
-          <ChatWidget qrToken={qrToken!} products={products} />
+          <ChatWidget qrToken={qrToken!} products={products} onOrder={handleOrderFromChat} />
         </div>
       )}
 

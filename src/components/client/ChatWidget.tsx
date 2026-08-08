@@ -1,12 +1,23 @@
 import { useState, type FormEvent } from "react";
-import { askRestaurantAssistant, type ChatMessage } from "../../lib/gemini";
+import { askRestaurantAssistant, type ChatMessage, type ProposedOrderItem } from "../../lib/gemini";
+import type { CartLine } from "./CartDrawer";
 import type { Product } from "../../types/database";
 
 interface DisplayMessage extends ChatMessage {
   productIds?: string[];
+  orderItems?: ProposedOrderItem[];
+  ordered?: boolean;
 }
 
-export function ChatWidget({ qrToken, products }: { qrToken: string; products: Product[] }) {
+export function ChatWidget({
+  qrToken,
+  products,
+  onOrder,
+}: {
+  qrToken: string;
+  products: Product[];
+  onOrder: (lines: CartLine[]) => Promise<void>;
+}) {
   const [messages, setMessages] = useState<DisplayMessage[]>([
     {
       role: "assistant",
@@ -15,6 +26,7 @@ export function ChatWidget({ qrToken, products }: { qrToken: string; products: P
   ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [ordering, setOrdering] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent) {
@@ -29,14 +41,50 @@ export function ChatWidget({ qrToken, products }: { qrToken: string; products: P
     setError(null);
 
     try {
-      const { reply, productIds } = await askRestaurantAssistant(qrToken, text, messages);
-      setMessages([...nextMessages, { role: "assistant", content: reply, productIds }]);
+      const { reply, productIds, orderItems } = await askRestaurantAssistant(
+        qrToken,
+        text,
+        messages
+      );
+      setMessages([...nextMessages, { role: "assistant", content: reply, productIds, orderItems }]);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "No pudimos contactar al asistente."
       );
     } finally {
       setSending(false);
+    }
+  }
+
+  async function handleOrder(messageIndex: number, items: ProposedOrderItem[]) {
+    const lines: CartLine[] = items
+      .map((item) => {
+        const product = products.find((p) => p.id === item.productId);
+        if (!product) return null;
+        const line: CartLine = {
+          key: `chat-${item.productId}-${Date.now()}`,
+          product,
+          quantity: item.quantity,
+          removedIngredients: [] as string[],
+          notes: item.notes ?? "",
+        };
+        return line;
+      })
+      .filter((l): l is CartLine => l !== null);
+
+    if (lines.length === 0) return;
+
+    setOrdering(messageIndex);
+    setError(null);
+    try {
+      await onOrder(lines);
+      setMessages((prev) =>
+        prev.map((m, i) => (i === messageIndex ? { ...m, ordered: true } : m))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo registrar el pedido.");
+    } finally {
+      setOrdering(null);
     }
   }
 
@@ -47,6 +95,15 @@ export function ChatWidget({ qrToken, products }: { qrToken: string; products: P
           const mentioned = (m.productIds ?? [])
             .map((id) => products.find((p) => p.id === id))
             .filter((p): p is Product => !!p && !!p.image_url);
+
+          const orderLines = (m.orderItems ?? [])
+            .map((item) => ({ item, product: products.find((p) => p.id === item.productId) }))
+            .filter((l): l is { item: ProposedOrderItem; product: Product } => !!l.product);
+
+          const total = orderLines.reduce(
+            (sum, l) => sum + l.product.price * l.item.quantity,
+            0
+          );
 
           return (
             <div key={i} className={m.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[80%]"}>
@@ -74,6 +131,31 @@ export function ChatWidget({ qrToken, products }: { qrToken: string; products: P
                       <span className="text-xs font-medium">{p.name}</span>
                     </div>
                   ))}
+                </div>
+              )}
+              {orderLines.length > 0 && (
+                <div className="mt-2 rounded-xl border border-brand-200 bg-brand-50 p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-700">
+                    Tu pedido
+                  </p>
+                  <ul className="mb-2 space-y-1 text-sm">
+                    {orderLines.map(({ item, product }) => (
+                      <li key={item.productId}>
+                        {item.quantity}x {product.name}
+                        {item.notes && (
+                          <span className="text-neutral-500"> — {item.notes}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mb-2 text-sm font-medium">Total: ${total.toFixed(2)}</p>
+                  <button
+                    onClick={() => handleOrder(i, m.orderItems!)}
+                    disabled={m.ordered || ordering === i}
+                    className="w-full rounded-lg bg-brand-600 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
+                  >
+                    {m.ordered ? "Pedido enviado ✓" : ordering === i ? "Ordenando…" : "Ordenar"}
+                  </button>
                 </div>
               )}
             </div>

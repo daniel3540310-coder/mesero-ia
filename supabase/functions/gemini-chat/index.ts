@@ -93,6 +93,18 @@ Deno.serve(async (req) => {
               properties: {
                 reply: { type: "STRING" },
                 productIds: { type: "ARRAY", items: { type: "STRING" } },
+                orderItems: {
+                  type: "ARRAY",
+                  items: {
+                    type: "OBJECT",
+                    properties: {
+                      productId: { type: "STRING" },
+                      quantity: { type: "INTEGER" },
+                      notes: { type: "STRING" },
+                    },
+                    required: ["productId", "quantity"],
+                  },
+                },
               },
               required: ["reply"],
             },
@@ -114,20 +126,40 @@ Deno.serve(async (req) => {
 
     let reply = "No tengo una respuesta para eso en este momento.";
     let productIds: string[] = [];
+    let orderItems: { productId: string; quantity: number; notes?: string }[] = [];
     try {
-      const parsed = JSON.parse(rawText) as { reply?: string; productIds?: string[] };
+      const parsed = JSON.parse(rawText) as {
+        reply?: string;
+        productIds?: string[];
+        orderItems?: { productId?: string; quantity?: number; notes?: string }[];
+      };
       if (parsed.reply) reply = parsed.reply;
+
+      const validProducts = new Map((products ?? []).map((p) => [p.id, p]));
+
       if (Array.isArray(parsed.productIds)) {
-        const validIds = new Set((products ?? []).map((p) => p.id));
-        productIds = parsed.productIds.filter((id) => validIds.has(id));
+        productIds = parsed.productIds.filter((id) => validProducts.has(id));
+      }
+
+      if (Array.isArray(parsed.orderItems)) {
+        orderItems = parsed.orderItems
+          .filter(
+            (item): item is { productId: string; quantity?: number; notes?: string } =>
+              !!item.productId && validProducts.has(item.productId) && validProducts.get(item.productId)!.is_available
+          )
+          .map((item) => ({
+            productId: item.productId,
+            quantity: Math.min(Math.max(Math.trunc(item.quantity ?? 1), 1), 20),
+            notes: typeof item.notes === "string" && item.notes.trim() ? item.notes.trim() : undefined,
+          }));
       }
     } catch {
       // Si el modelo no devolvió JSON válido (raro con responseSchema, pero
-      // por si acaso), se usa el texto crudo como respuesta sin imágenes.
+      // por si acaso), se usa el texto crudo como respuesta sin imágenes ni pedido.
       if (rawText) reply = rawText;
     }
 
-    return jsonResponse({ reply, productIds });
+    return jsonResponse({ reply, productIds, orderItems });
   } catch (err) {
     console.error(err);
     return jsonResponse({ error: "Error interno del asistente." }, 500);
@@ -210,5 +242,15 @@ REGLAS ESTRICTAS:
 - Cada platillo del menú tiene un [id:...]. Cuando recomiendes o menciones un
   platillo específico, incluye su id en "productIds" para que el cliente vea
   su foto. No incluyas ids de platillos que no mencionaste. El texto de
-  "reply" nunca debe mostrar el id en crudo al cliente.`;
+  "reply" nunca debe mostrar el id en crudo al cliente.
+- Cuando el cliente diga explícitamente qué quiere ordenar (con cantidad y
+  platillo claros) y tú se lo hayas confirmado en tu respuesta, llena
+  "orderItems" con esos platillos exactos (id, cantidad, y notas si pidió
+  alguna modificación o especificación). El cliente verá un botón para
+  confirmar ese pedido, así que "orderItems" debe reflejar EXACTAMENTE lo
+  que el cliente pidió, ni más ni menos.
+- Si el cliente todavía está preguntando, decidiendo, o no ha confirmado
+  cantidades, deja "orderItems" vacío — no asumas que quiere ordenar.
+- Nunca pongas en "orderItems" un platillo que el cliente no pidió
+  explícitamente, aunque lo hayas recomendado.`;
 }

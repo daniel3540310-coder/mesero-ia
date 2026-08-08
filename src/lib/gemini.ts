@@ -5,9 +5,16 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface ProposedOrderItem {
+  productId: string;
+  quantity: number;
+  notes?: string;
+}
+
 export interface AssistantReply {
   reply: string;
   productIds: string[];
+  orderItems: ProposedOrderItem[];
 }
 
 export async function askRestaurantAssistant(
@@ -31,5 +38,9 @@ export async function askRestaurantAssistant(
     throw new Error(detail ?? error.message ?? "No se pudo contactar al asistente.");
   }
 
-  return { reply: data.reply as string, productIds: (data.productIds as string[]) ?? [] };
+  return {
+    reply: data.reply as string,
+    productIds: (data.productIds as string[]) ?? [],
+    orderItems: (data.orderItems as ProposedOrderItem[]) ?? [],
+  };
 }
