@@ -112,16 +112,24 @@ export function ClientMenuPage() {
 
   async function submitOrder(lines: CartLine[]) {
     if (!restaurant || !table || lines.length === 0) return;
-    const { data: order, error: orderError } = await supabase
+
+    // El cliente que ordena es anónimo y las políticas RLS de "orders" solo
+    // dejan LEER pedidos al restaurante dueño (correcto: un cliente no debe
+    // poder ver pedidos de otras mesas). Pedir la fila de vuelta con
+    // .select() después del insert (como se hacía antes) choca con eso:
+    // PostgREST no puede devolver una fila que el cliente no puede leer, así
+    // que cancela el insert entero — el pedido nunca llegaba a guardarse.
+    // Por eso el id se genera aquí mismo y nunca se le pide la fila de
+    // vuelta a Supabase.
+    const orderId = crypto.randomUUID();
+    const { error: orderError } = await supabase
       .from("orders")
-      .insert({ restaurant_id: restaurant.id, table_id: table.id, status: "pendiente" })
-      .select()
-      .single();
+      .insert({ id: orderId, restaurant_id: restaurant.id, table_id: table.id, status: "pendiente" });
     if (orderError) throw orderError;
 
     const { error: itemsError } = await supabase.from("order_items").insert(
       lines.map((line) => ({
-        order_id: order.id,
+        order_id: orderId,
         product_id: line.product.id,
         quantity: line.quantity,
         removed_ingredients: line.removedIngredients,
