@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { askRestaurantAssistant, type ChatMessage, type ProposedOrderItem } from "../../lib/gemini";
+import { useSpeechRecognition } from "../../hooks/useSpeechRecognition";
 import type { CartLine } from "./CartDrawer";
 import type { Product } from "../../types/database";
 
@@ -29,10 +30,38 @@ export function ChatWidget({
   const [ordering, setOrdering] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Lo que ya estaba escrito cuando empezó el dictado: el texto reconocido se
+  // agrega a eso en vez de reemplazarlo, para no borrar lo que el cliente tecleó.
+  const dictationBaseRef = useRef("");
+
+  const {
+    supported: voiceSupported,
+    listening,
+    error: voiceError,
+    start: startDictation,
+    stop: stopDictation,
+  } = useSpeechRecognition({
+    onResult: (final, interim) => {
+      const spoken = `${final}${interim}`.trim();
+      const base = dictationBaseRef.current;
+      setInput(base && spoken ? `${base} ${spoken}` : base || spoken);
+    },
+  });
+
+  function toggleDictation() {
+    if (listening) {
+      stopDictation();
+      return;
+    }
+    dictationBaseRef.current = input.trim();
+    startDictation();
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const text = input.trim();
     if (!text || sending) return;
+    if (listening) stopDictation();
 
     const nextMessages: DisplayMessage[] = [...messages, { role: "user", content: text }];
     setMessages(nextMessages);
@@ -170,21 +199,47 @@ export function ChatWidget({
         {sending && <p className="text-xs text-neutral-400">Escribiendo…</p>}
         {error && <p className="text-xs text-red-600">{error}</p>}
       </div>
-      <form onSubmit={handleSubmit} className="flex gap-2 border-t border-neutral-200 p-3">
-        <input
-          className="flex-1 rounded-full border border-neutral-300 px-4 py-2 text-sm"
-          placeholder="Escribe tu pregunta…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-        <button
-          type="submit"
-          disabled={sending}
-          className="rounded-full bg-brand-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-        >
-          Enviar
-        </button>
-      </form>
+      <div className="border-t border-neutral-200 p-3">
+        {voiceError && <p className="mb-2 text-xs text-red-600">{voiceError}</p>}
+        {listening && (
+          <p className="mb-2 flex items-center gap-1.5 text-xs text-brand-700">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+            Escuchando… habla y toca el micrófono para terminar.
+          </p>
+        )}
+        <form onSubmit={handleSubmit} className="flex gap-2">
+          <input
+            className="flex-1 rounded-full border border-neutral-300 px-4 py-2 text-sm"
+            placeholder={listening ? "Escuchando…" : "Escribe tu pregunta…"}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+          />
+          {voiceSupported && (
+            <button
+              type="button"
+              onClick={toggleDictation}
+              disabled={sending}
+              aria-pressed={listening}
+              aria-label={listening ? "Detener dictado por voz" : "Dictar por voz"}
+              title={listening ? "Detener dictado" : "Dictar por voz"}
+              className={`rounded-full px-3 py-2 text-base leading-none transition disabled:opacity-60 ${
+                listening
+                  ? "bg-red-600 text-white hover:bg-red-700"
+                  : "border border-neutral-300 text-neutral-600 hover:bg-neutral-100"
+              }`}
+            >
+              🎤
+            </button>
+          )}
+          <button
+            type="submit"
+            disabled={sending}
+            className="rounded-full bg-brand-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+          >
+            Enviar
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
