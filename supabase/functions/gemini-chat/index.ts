@@ -115,8 +115,17 @@ Deno.serve(async (req) => {
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error("Gemini API error:", errText);
-      return jsonResponse({ error: "El asistente no está disponible en este momento." }, 502);
+      console.error("Gemini API error:", response.status, errText);
+      // El cliente en la mesa solo ve el mensaje amable; "detail" lleva la
+      // causa real (status + respuesta de Google) para poder diagnosticar,
+      // porque los logs de Edge Functions se borran muy rápido.
+      return jsonResponse(
+        {
+          error: "El asistente no está disponible en este momento.",
+          detail: `gemini_http_${response.status}: ${errText.slice(0, 400)}`,
+        },
+        502
+      );
     }
 
     const data = await response.json();
