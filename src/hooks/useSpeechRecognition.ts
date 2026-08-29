@@ -4,8 +4,14 @@ interface UseSpeechRecognitionOptions {
   /** Idioma del dictado. Por defecto español de México. */
   lang?: string;
   /**
+   * Modo manos libres: el micrófono se vuelve a abrir solo cuando el navegador
+   * lo cierra por silencio. Pensado para la cocina, donde nadie puede tocar la
+   * pantalla. En false (por defecto) se comporta como un dictado puntual.
+   */
+  continuous?: boolean;
+  /**
    * Se llama cada vez que hay texto reconocido. `interim` es el texto
-   * provisional que el navegador aún puede corregir mientras el cliente habla.
+   * provisional que el navegador aún puede corregir mientras se habla.
    */
   onResult: (final: string, interim: string) => void;
 }
@@ -21,20 +27,37 @@ const ERROR_MESSAGES: Record<SpeechRecognitionErrorCode, string> = {
   aborted: "",
 };
 
+/** Errores por los que no tiene sentido reintentar: reabrir el micrófono fallaría igual. */
+const FATAL_ERRORS: SpeechRecognitionErrorCode[] = [
+  "not-allowed",
+  "service-not-allowed",
+  "audio-capture",
+  "language-not-supported",
+];
+
 /**
- * Dictado por voz con la Web Speech API nativa del navegador.
+ * Reconocimiento de voz con la Web Speech API nativa del navegador.
  *
  * Requiere un contexto seguro (HTTPS o localhost) y no existe en todos los
  * navegadores — `supported` indica si se puede ofrecer la función.
  */
-export function useSpeechRecognition({ lang = "es-MX", onResult }: UseSpeechRecognitionOptions) {
+export function useSpeechRecognition({
+  lang = "es-MX",
+  continuous = false,
+  onResult,
+}: UseSpeechRecognitionOptions) {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
+  // En modo continuo el navegador cierra el micrófono solo (por silencio o por
+  // límite de tiempo). Este ref distingue ese cierre automático —hay que
+  // reabrirlo— de una parada pedida por el usuario.
+  const shouldListenRef = useRef(false);
+
   // onResult suele ser una función nueva en cada render. Se guarda en un ref
   // para que `start` no dependa de ella: recrear el objeto SpeechRecognition
-  // a media dictado cortaría el micrófono.
+  // a media escucha cortaría el micrófono.
   const onResultRef = useRef(onResult);
   useEffect(() => {
     onResultRef.current = onResult;
@@ -44,7 +67,11 @@ export function useSpeechRecognition({ lang = "es-MX", onResult }: UseSpeechReco
     typeof window !== "undefined" &&
     !!(window.SpeechRecognition ?? window.webkitSpeechRecognition);
 
-  const start = useCallback(() => {
+  // `open` crea y arranca el objeto de reconocimiento. Se guarda en un ref para
+  // que `onend` pueda reabrirlo sin caer en una dependencia circular.
+  const openRef = useRef<() => void>(() => {});
+
+  const open = useCallback(() => {
     if (recognitionRef.current) return; // ya está escuchando
 
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
@@ -52,7 +79,7 @@ export function useSpeechRecognition({ lang = "es-MX", onResult }: UseSpeechReco
 
     const recognition = new Recognition();
     recognition.lang = lang;
-    recognition.continuous = false;
+    recognition.continuous = continuous;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
@@ -68,13 +95,25 @@ export function useSpeechRecognition({ lang = "es-MX", onResult }: UseSpeechReco
     };
 
     recognition.onerror = (event) => {
-      // "aborted" es lo que ocurre al cancelar a propósito: no es un fallo.
+      if (FATAL_ERRORS.includes(event.error)) {
+        // Reabrir no serviría de nada: se corta la escucha del todo.
+        shouldListenRef.current = false;
+        setError(ERROR_MESSAGES[event.error]);
+        return;
+      }
+      // En manos libres el silencio es normal (la cocina no habla todo el rato):
+      // no se muestra como error, el micrófono simplemente se reabre en onend.
+      if (continuous && (event.error === "no-speech" || event.error === "network")) return;
       const message = ERROR_MESSAGES[event.error];
       if (message) setError(message);
     };
 
     recognition.onend = () => {
       recognitionRef.current = null;
+      if (shouldListenRef.current) {
+        openRef.current();
+        return;
+      }
       setListening(false);
     };
 
@@ -82,15 +121,26 @@ export function useSpeechRecognition({ lang = "es-MX", onResult }: UseSpeechReco
     recognitionRef.current = recognition;
     setListening(true);
     recognition.start();
-  }, [lang]);
+  }, [lang, continuous]);
+
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
+
+  const start = useCallback(() => {
+    shouldListenRef.current = true;
+    open();
+  }, [open]);
 
   const stop = useCallback(() => {
+    shouldListenRef.current = false;
     recognitionRef.current?.stop();
   }, []);
 
-  // Si el cliente cierra o cambia de pantalla mientras dicta, soltar el micrófono.
+  // Si se cierra la pantalla mientras escucha, soltar el micrófono.
   useEffect(() => {
     return () => {
+      shouldListenRef.current = false;
       recognitionRef.current?.abort();
       recognitionRef.current = null;
     };

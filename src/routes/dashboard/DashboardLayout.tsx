@@ -7,7 +7,7 @@ const links = [
   { to: "/dashboard/policies", label: "Políticas" },
   { to: "/dashboard/ai-info", label: "Info para la IA" },
   { to: "/dashboard/tables", label: "Mesas" },
-  { to: "/dashboard/orders", label: "Pedidos" },
+  { to: "/dashboard/orders", label: "Cocina" },
 ];
 
 export function DashboardLayout() {
