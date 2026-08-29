@@ -67,7 +67,7 @@ export function OrdersPage() {
   const [now, setNow] = useState(() => Date.now());
   const [voiceFeedback, setVoiceFeedback] = useState<{
     message: string;
-    undoOrderId?: string;
+    canUndo?: boolean;
   } | null>(null);
 
   const {
@@ -177,9 +177,49 @@ export function OrdersPage() {
 
   const finished = useMemo(() => orders.filter((o) => o.status !== "pendiente"), [orders]);
 
-  async function updateStatus(orderId: string, status: OrderStatus) {
+  /**
+   * Última acción revertible. Se guarda también cuando se usan los botones, no
+   * solo la voz: si el cocinero toca "entregado" por error, puede decir
+   * "deshacer" sin volver a la pantalla.
+   */
+  const lastActionRef = useRef<{
+    orderId: string;
+    previousStatus: OrderStatus;
+    number?: number;
+  } | null>(null);
+
+  async function updateStatus(orderId: string, status: OrderStatus, record = true) {
+    if (record) {
+      const current = orders.find((o) => o.id === orderId);
+      if (current) {
+        lastActionRef.current = {
+          orderId,
+          previousStatus: current.status,
+          number: orderNumbers.get(orderId),
+        };
+      }
+    }
     await supabase.from("orders").update({ status }).eq("id", orderId);
     await load();
+  }
+
+  async function undoLastAction() {
+    const last = lastActionRef.current;
+    if (!last) {
+      setVoiceFeedback({ message: "No hay nada que deshacer." });
+      return;
+    }
+    // Se limpia antes de revertir para que un segundo "deshacer" no devuelva
+    // la comanda al estado que el cocinero acaba de corregir.
+    lastActionRef.current = null;
+    const label = STATUS_LABELS[last.previousStatus].toLowerCase();
+    setVoiceFeedback({
+      message:
+        last.number !== undefined
+          ? `Comanda #${last.number} regresó a ${label}.`
+          : `Comanda regresada a ${label}.`,
+    });
+    await updateStatus(last.orderId, last.previousStatus, false);
   }
 
   // El modo continuo puede repetir la misma frase varias veces; sin este freno
@@ -191,10 +231,16 @@ export function OrdersPage() {
     const command = parseKitchenCommand(final);
     if (!command) return;
 
-    const key = `${command.action}-${command.orderNumber}`;
+    const key =
+      command.action === "deshacer" ? "deshacer" : `${command.action}-${command.orderNumber}`;
     const at = Date.now();
     if (lastCommandRef.current?.key === key && at - lastCommandRef.current.at < 5000) return;
     lastCommandRef.current = { key, at };
+
+    if (command.action === "deshacer") {
+      undoLastAction();
+      return;
+    }
 
     const target = pending.find((o) => orderNumbers.get(o.id) === command.orderNumber);
     if (!target) {
@@ -205,10 +251,13 @@ export function OrdersPage() {
     }
 
     setVoiceFeedback({
-      message: `Comanda #${command.orderNumber} marcada como entregada.`,
-      undoOrderId: target.id,
+      message:
+        command.action === "entregado"
+          ? `Comanda #${command.orderNumber} marcada como entregada.`
+          : `Comanda #${command.orderNumber} cancelada.`,
+      canUndo: true,
     });
-    updateStatus(target.id, "entregado");
+    updateStatus(target.id, command.action);
   }
 
   const {
@@ -349,7 +398,8 @@ export function OrdersPage() {
 
       {listening && (
         <p className="mb-3 text-xs text-neutral-500">
-          Di “listo 3” o “entregado 3” para marcar la comanda #3 como entregada.
+          Comandos: <strong>“listo 3”</strong> marca la comanda #3 como entregada ·{" "}
+          <strong>“cancelar 3”</strong> la cancela · <strong>“deshacer”</strong> revierte lo último.
         </p>
       )}
       {voiceError && <p className="mb-3 text-xs text-red-600">{voiceError}</p>}
@@ -357,13 +407,9 @@ export function OrdersPage() {
       {voiceFeedback && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm">
           <span>{voiceFeedback.message}</span>
-          {voiceFeedback.undoOrderId && (
+          {voiceFeedback.canUndo && (
             <button
-              onClick={() => {
-                const id = voiceFeedback.undoOrderId;
-                setVoiceFeedback(null);
-                if (id) updateStatus(id, "pendiente");
-              }}
+              onClick={() => undoLastAction()}
               className="shrink-0 font-medium text-brand-700 hover:underline"
             >
               Deshacer

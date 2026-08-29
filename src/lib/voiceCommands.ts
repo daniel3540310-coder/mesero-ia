@@ -6,10 +6,10 @@
  * como entregada la comanda equivocada.
  */
 
-export interface KitchenVoiceCommand {
-  action: "entregado";
-  orderNumber: number;
-}
+export type KitchenVoiceCommand =
+  | { action: "entregado"; orderNumber: number }
+  | { action: "cancelado"; orderNumber: number }
+  | { action: "deshacer" };
 
 /** Palabras que el cocinero puede usar para dar una comanda por terminada. */
 const DELIVERED_TRIGGERS = [
@@ -28,6 +28,24 @@ const DELIVERED_TRIGGERS = [
   "salio",
   "sale",
 ];
+
+/** Palabras para tirar una comanda que ya no se va a preparar. */
+const CANCEL_TRIGGERS = [
+  "cancelar",
+  "cancela",
+  "cancelado",
+  "cancelada",
+  "anular",
+  "anula",
+  "anulado",
+  "anulada",
+];
+
+/**
+ * Palabras para revertir la última acción. No llevan número: quien las dice
+ * está corrigiendo lo que el micrófono acaba de entender mal.
+ */
+const UNDO_TRIGGERS = ["deshacer", "deshaz", "revertir", "revierte", "reversa"];
 
 /**
  * El dictado en español casi nunca devuelve dígitos ("listo tres", no
@@ -92,11 +110,20 @@ export function parseKitchenCommand(transcript: string): KitchenVoiceCommand | n
   const words = normalize(transcript).split(" ").filter(Boolean);
   if (words.length === 0) return null;
 
-  const hasTrigger = words.some((word) => DELIVERED_TRIGGERS.includes(word));
-  if (!hasTrigger) return null;
+  // "deshacer" se revisa primero por ser la única orden sin número, y porque
+  // suele decirse justo después de un comando mal entendido: tiene prioridad.
+  if (words.some((word) => UNDO_TRIGGERS.includes(word))) return { action: "deshacer" };
 
   const orderNumber = extractNumber(words);
   if (orderNumber === null || orderNumber < 1) return null;
 
-  return { action: "entregado", orderNumber };
+  // Cancelar antes que entregar: si por alguna razón se colaran las dos
+  // palabras, la interpretación conservadora es no dar el platillo por servido.
+  if (words.some((word) => CANCEL_TRIGGERS.includes(word))) {
+    return { action: "cancelado", orderNumber };
+  }
+  if (words.some((word) => DELIVERED_TRIGGERS.includes(word))) {
+    return { action: "entregado", orderNumber };
+  }
+  return null;
 }
