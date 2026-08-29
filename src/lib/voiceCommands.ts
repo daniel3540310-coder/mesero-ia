@@ -65,6 +65,20 @@ const NUMBER_WORDS: Record<string, number> = {
 
 const TENS = new Set([30, 40, 50, 60, 70, 80, 90]);
 
+/**
+ * Palabra de activación. Sin ella no se procesa absolutamente nada: en una
+ * cocina se habla todo el tiempo, y sin este filtro cualquier frase suelta
+ * ("ya está listo el tres") podría mover una comanda.
+ */
+const WAKE_WORDS = ["mesero", "mesera", "meseroia"];
+
+/**
+ * Saludos que suelen colarse antes de la palabra clave ("hey mesero", "oye
+ * mesero"). Se aceptan varias grafías porque el dictado transcribe "hey" de
+ * formas distintas según el acento.
+ */
+const WAKE_PREFIXES = ["hey", "hei", "ey", "hay", "oye", "oiga", "hola", "ok", "okey", "okay"];
+
 /** Minúsculas, sin acentos y sin puntuación, para comparar de forma estable. */
 export function normalize(text: string): string {
   return text
@@ -74,6 +88,30 @@ export function normalize(text: string): string {
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Quita la palabra de activación y devuelve el resto de la frase, o null si la
+ * frase no iba dirigida al sistema. Exige que la palabra clave vaya al
+ * principio: mencionar "mesero" a media conversación no debe activar nada.
+ */
+function stripWakeWord(words: string[]): string[] | null {
+  let i = 0;
+  if (words[i] !== undefined && WAKE_PREFIXES.includes(words[i])) i++;
+  if (words[i] === undefined || !WAKE_WORDS.includes(words[i])) return null;
+  i++;
+  // "Mesero IA" puede transcribirse como dos palabras.
+  if (words[i] === "ia") i++;
+  return words.slice(i);
+}
+
+/**
+ * Si la frase iba dirigida al sistema, aunque el comando no se entienda. Sirve
+ * para avisarle al cocinero que sí lo escuchamos pero no comprendimos la orden,
+ * en vez de dejarlo hablando sin respuesta.
+ */
+export function hasWakeWord(transcript: string): boolean {
+  return stripWakeWord(normalize(transcript).split(" ").filter(Boolean)) !== null;
 }
 
 /**
@@ -102,13 +140,14 @@ function extractNumber(words: string[]): number | null {
 /**
  * Devuelve el comando reconocido, o null si la frase no es un comando claro.
  *
- * Exige que aparezcan las dos partes (acción y número) para no marcar nada por
- * una conversación de cocina captada por accidente: "ya está listo" sin número
- * no hace nada.
+ * Dos filtros contra el ruido de una cocina:
+ *   1. La frase debe empezar con la palabra de activación ("Hey Mesero…").
+ *   2. Debe traer acción y número ("listo 3"); "listo" a secas no hace nada.
  */
 export function parseKitchenCommand(transcript: string): KitchenVoiceCommand | null {
-  const words = normalize(transcript).split(" ").filter(Boolean);
-  if (words.length === 0) return null;
+  // Sin palabra de activación al inicio, la frase se descarta entera.
+  const words = stripWakeWord(normalize(transcript).split(" ").filter(Boolean));
+  if (words === null || words.length === 0) return null;
 
   // "deshacer" se revisa primero por ser la única orden sin número, y porque
   // suele decirse justo después de un comando mal entendido: tiene prioridad.

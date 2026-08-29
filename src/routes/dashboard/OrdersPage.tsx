@@ -3,7 +3,7 @@ import { supabase } from "../../lib/supabaseClient";
 import { useAuth } from "../../contexts/AuthContext";
 import { useKitchenAlert } from "../../hooks/useKitchenAlert";
 import { useSpeechRecognition } from "../../hooks/useSpeechRecognition";
-import { parseKitchenCommand } from "../../lib/voiceCommands";
+import { hasWakeWord, parseKitchenCommand } from "../../lib/voiceCommands";
 import type {
   Order,
   OrderItem,
@@ -229,7 +229,14 @@ export function OrdersPage() {
   function handleVoiceResult(final: string) {
     if (!final.trim()) return;
     const command = parseKitchenCommand(final);
-    if (!command) return;
+    if (!command) {
+      // Sin palabra de activación es conversación de cocina: se ignora en
+      // silencio. Con ella, sí conviene avisar que no se entendió la orden.
+      if (hasWakeWord(final)) {
+        setVoiceFeedback({ message: "Te escuché, pero no entendí el comando." });
+      }
+      return;
+    }
 
     const key =
       command.action === "deshacer" ? "deshacer" : `${command.action}-${command.orderNumber}`;
@@ -398,8 +405,9 @@ export function OrdersPage() {
 
       {listening && (
         <p className="mb-3 text-xs text-neutral-500">
-          Comandos: <strong>“listo 3”</strong> marca la comanda #3 como entregada ·{" "}
-          <strong>“cancelar 3”</strong> la cancela · <strong>“deshacer”</strong> revierte lo último.
+          Empieza siempre con <strong>“Hey Mesero”</strong> (o solo “Mesero”); sin eso se ignora lo
+          que se hable en la cocina. Ejemplos: <strong>“Hey Mesero, listo 3”</strong> ·{" "}
+          <strong>“Mesero, cancelar 3”</strong> · <strong>“Mesero, deshacer”</strong>.
         </p>
       )}
       {voiceError && <p className="mb-3 text-xs text-red-600">{voiceError}</p>}
