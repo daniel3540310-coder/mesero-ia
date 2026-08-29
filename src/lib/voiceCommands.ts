@@ -66,15 +66,29 @@ const NUMBER_WORDS: Record<string, number> = {
 const TENS = new Set([30, 40, 50, 60, 70, 80, 90]);
 
 /**
- * Palabra de activación. Sin ella no se procesa absolutamente nada: en una
- * cocina se habla todo el tiempo, y sin este filtro cualquier frase suelta
- * ("ya está listo el tres") podría mover una comanda.
+ * Palabra de activación: "Diccu". Sin ella no se procesa absolutamente nada:
+ * en una cocina se habla todo el tiempo, y sin este filtro cualquier frase
+ * suelta ("ya está listo el tres") podría mover una comanda.
+ *
+ * Se aceptan variantes fonéticas porque "Diccu" no es una palabra en español y
+ * el dictado nunca la escribe igual: devuelve "dicu", "dico", "di cu"… Exigir
+ * la grafía exacta haría que el sistema casi nunca respondiera.
  */
-const WAKE_WORDS = ["mesero", "mesera", "meseroia"];
+const WAKE_WORDS = [
+  "diccu",
+  "dicu",
+  "dicku",
+  "diku",
+  "dico",
+  "dicco",
+  "ticu",
+  "tico",
+  "dick",
+];
 
 /**
- * Saludos que suelen colarse antes de la palabra clave ("hey mesero", "oye
- * mesero"). Se aceptan varias grafías porque el dictado transcribe "hey" de
+ * Saludos que suelen colarse antes de la palabra clave ("hey Diccu", "oye
+ * Diccu"). Se aceptan varias grafías porque el dictado transcribe "hey" de
  * formas distintas según el acento.
  */
 const WAKE_PREFIXES = ["hey", "hei", "ey", "hay", "oye", "oiga", "hola", "ok", "okey", "okay"];
@@ -93,16 +107,24 @@ export function normalize(text: string): string {
 /**
  * Quita la palabra de activación y devuelve el resto de la frase, o null si la
  * frase no iba dirigida al sistema. Exige que la palabra clave vaya al
- * principio: mencionar "mesero" a media conversación no debe activar nada.
+ * principio: mencionarla a media conversación no debe activar nada.
  */
 function stripWakeWord(words: string[]): string[] | null {
   let i = 0;
   if (words[i] !== undefined && WAKE_PREFIXES.includes(words[i])) i++;
-  if (words[i] === undefined || !WAKE_WORDS.includes(words[i])) return null;
-  i++;
-  // "Mesero IA" puede transcribirse como dos palabras.
-  if (words[i] === "ia") i++;
-  return words.slice(i);
+
+  if (words[i] !== undefined && WAKE_WORDS.includes(words[i])) {
+    return words.slice(i + 1);
+  }
+
+  // El dictado suele partir un nombre que no reconoce en dos ("di cu"), así que
+  // también se prueba uniendo las dos palabras siguientes.
+  const joined = `${words[i] ?? ""}${words[i + 1] ?? ""}`;
+  if (joined.length > 0 && WAKE_WORDS.includes(joined)) {
+    return words.slice(i + 2);
+  }
+
+  return null;
 }
 
 /**
@@ -141,7 +163,7 @@ function extractNumber(words: string[]): number | null {
  * Devuelve el comando reconocido, o null si la frase no es un comando claro.
  *
  * Dos filtros contra el ruido de una cocina:
- *   1. La frase debe empezar con la palabra de activación ("Hey Mesero…").
+ *   1. La frase debe empezar con la palabra de activación ("Hey Diccu…").
  *   2. Debe traer acción y número ("listo 3"); "listo" a secas no hace nada.
  */
 export function parseKitchenCommand(transcript: string): KitchenVoiceCommand | null {

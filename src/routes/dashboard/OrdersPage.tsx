@@ -405,9 +405,9 @@ export function OrdersPage() {
 
       {listening && (
         <p className="mb-3 text-xs text-neutral-500">
-          Empieza siempre con <strong>“Hey Mesero”</strong> (o solo “Mesero”); sin eso se ignora lo
-          que se hable en la cocina. Ejemplos: <strong>“Hey Mesero, listo 3”</strong> ·{" "}
-          <strong>“Mesero, cancelar 3”</strong> · <strong>“Mesero, deshacer”</strong>.
+          Empieza siempre con <strong>“Diccu”</strong> (o “Hey Diccu”); sin eso se ignora lo que se
+          hable en la cocina. Ejemplos: <strong>“Diccu, listo 3”</strong> ·{" "}
+          <strong>“Diccu, cancelar 3”</strong> · <strong>“Hey Diccu, deshacer”</strong>.
         </p>
       )}
       {voiceError && <p className="mb-3 text-xs text-red-600">{voiceError}</p>}
