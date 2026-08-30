@@ -72,6 +72,10 @@ export function OrdersPage() {
   // Lo último que captó el micrófono. Se muestra en pantalla para que se vea de
   // un vistazo si está oyendo, y con qué palabras exactas llega el dictado.
   const [heard, setHeard] = useState("");
+  // Comandas con un cambio de estado en vuelo: sus botones se deshabilitan de
+  // inmediato para que se vea que el comando de voz fue recibido, sin esperar
+  // a que responda la base de datos.
+  const [updatingIds, setUpdatingIds] = useState<Set<string>>(new Set());
 
   const {
     supported: soundSupported,
@@ -202,8 +206,35 @@ export function OrdersPage() {
         };
       }
     }
-    await supabase.from("orders").update({ status }).eq("id", orderId);
-    await load();
+    setUpdatingIds((prev) => new Set(prev).add(orderId));
+    try {
+      await supabase.from("orders").update({ status }).eq("id", orderId);
+      await load();
+    } finally {
+      setUpdatingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(orderId);
+        return next;
+      });
+    }
+  }
+
+  /** "Mesero, deshacer 2": devuelve esa comanda concreta a preparación. */
+  async function undoOrderNumber(orderNumber: number) {
+    const target = orders.find((o) => orderNumbers.get(o.id) === orderNumber);
+    if (!target) {
+      setVoiceFeedback({ message: `No encontré la comanda #${orderNumber}.` });
+      return;
+    }
+    if (target.status === "pendiente") {
+      setVoiceFeedback({ message: `La comanda #${orderNumber} ya está en preparación.` });
+      return;
+    }
+    // Ya se está revirtiendo a mano: no tiene sentido dejarla como "última
+    // acción deshacible", o un segundo "deshacer" la mandaría de vuelta.
+    if (lastActionRef.current?.orderId === target.id) lastActionRef.current = null;
+    setVoiceFeedback({ message: `Comanda #${orderNumber} regresó a preparación.` });
+    await updateStatus(target.id, "pendiente", false);
   }
 
   async function undoLastAction() {
@@ -241,14 +272,14 @@ export function OrdersPage() {
       return;
     }
 
-    const key =
-      command.action === "deshacer" ? "deshacer" : `${command.action}-${command.orderNumber}`;
+    const key = `${command.action}-${command.orderNumber ?? "ultimo"}`;
     const at = Date.now();
     if (lastCommandRef.current?.key === key && at - lastCommandRef.current.at < 5000) return;
     lastCommandRef.current = { key, at };
 
     if (command.action === "deshacer") {
-      undoLastAction();
+      if (command.orderNumber !== undefined) undoOrderNumber(command.orderNumber);
+      else undoLastAction();
       return;
     }
 
@@ -309,6 +340,7 @@ export function OrdersPage() {
   function renderOrder(order: OrderView) {
     const number = orderNumbers.get(order.id);
     const isPending = order.status === "pendiente";
+    const updating = updatingIds.has(order.id);
     const countdown = countdownStyle(minutesLeft(order, now));
 
     return (
@@ -366,13 +398,15 @@ export function OrdersPage() {
           <div className="flex gap-2">
             <button
               onClick={() => updateStatus(order.id, "entregado")}
-              className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+              disabled={updating}
+              className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60"
             >
-              Marcar entregado
+              {updating ? "Guardando…" : "Marcar entregado"}
             </button>
             <button
               onClick={() => updateStatus(order.id, "cancelado")}
-              className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-100"
+              disabled={updating}
+              className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-100 disabled:opacity-60"
             >
               Cancelar
             </button>
@@ -414,9 +448,10 @@ export function OrdersPage() {
 
       {listening && (
         <p className="mb-3 text-xs text-neutral-500">
-          Empieza siempre con <strong>“Diccu”</strong> (o “Hey Diccu”); sin eso se ignora lo que se
-          hable en la cocina. Ejemplos: <strong>“Diccu, listo 3”</strong> ·{" "}
-          <strong>“Diccu, cancelar 3”</strong> · <strong>“Hey Diccu, deshacer”</strong>.
+          Empieza siempre con <strong>“Mesero”</strong> (o “Hey Mesero”); sin eso se ignora lo que
+          se hable en la cocina. Ejemplos: <strong>“Mesero, mesa 3 lista”</strong> ·{" "}
+          <strong>“Hey Mesero, entregar 4”</strong> · <strong>“Mesero, cancelar 5”</strong> ·{" "}
+          <strong>“Mesero, deshacer 2”</strong>.
         </p>
       )}
       {listening && (
@@ -451,7 +486,9 @@ export function OrdersPage() {
             {pending.length === 0 ? (
               <p className="text-neutral-500">No hay comandas pendientes.</p>
             ) : (
-              <div className="space-y-3">{pending.map((order) => renderOrder(order))}</div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {pending.map((order) => renderOrder(order))}
+              </div>
             )}
           </section>
 
@@ -460,7 +497,9 @@ export function OrdersPage() {
               <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
                 Terminadas
               </h3>
-              <div className="space-y-3">{finished.map((order) => renderOrder(order))}</div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {finished.map((order) => renderOrder(order))}
+              </div>
             </section>
           )}
         </div>

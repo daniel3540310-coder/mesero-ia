@@ -9,7 +9,8 @@
 export type KitchenVoiceCommand =
   | { action: "entregado"; orderNumber: number }
   | { action: "cancelado"; orderNumber: number }
-  | { action: "deshacer" };
+  // Sin número deshace la última acción; con número revierte esa comanda.
+  | { action: "deshacer"; orderNumber?: number };
 
 /** Palabras que el cocinero puede usar para dar una comanda por terminada. */
 const DELIVERED_TRIGGERS = [
@@ -42,8 +43,8 @@ const CANCEL_TRIGGERS = [
 ];
 
 /**
- * Palabras para revertir la última acción. No llevan número: quien las dice
- * está corrigiendo lo que el micrófono acaba de entender mal.
+ * Palabras para revertir. Sin número deshacen la última acción; con número
+ * ("deshacer 2") devuelven esa comanda concreta a preparación.
  */
 const UNDO_TRIGGERS = ["deshacer", "deshaz", "revertir", "revierte", "reversa"];
 
@@ -66,29 +67,21 @@ const NUMBER_WORDS: Record<string, number> = {
 const TENS = new Set([30, 40, 50, 60, 70, 80, 90]);
 
 /**
- * Palabra de activación: "Diccu". Sin ella no se procesa absolutamente nada:
+ * Palabra de activación: "Mesero". Sin ella no se procesa absolutamente nada:
  * en una cocina se habla todo el tiempo, y sin este filtro cualquier frase
  * suelta ("ya está listo el tres") podría mover una comanda.
  *
- * Se aceptan variantes fonéticas porque "Diccu" no es una palabra en español y
- * el dictado nunca la escribe igual: devuelve "dicu", "dico", "di cu"… Exigir
- * la grafía exacta haría que el sistema casi nunca respondiera.
+ * Al ser una palabra real del español, el dictado la reconoce sin problema (a
+ * diferencia de un nombre inventado, que llega escrito de diez formas). A
+ * cambio es una palabra que se dice sola en un restaurante, así que el filtro
+ * de que vaya AL INICIO y el de exigir acción + número son los que evitan
+ * activaciones por accidente.
  */
-const WAKE_WORDS = [
-  "diccu",
-  "dicu",
-  "dicku",
-  "diku",
-  "dico",
-  "dicco",
-  "ticu",
-  "tico",
-  "dick",
-];
+const WAKE_WORDS = ["mesero", "mesera", "meseros"];
 
 /**
- * Saludos que suelen colarse antes de la palabra clave ("hey Diccu", "oye
- * Diccu"). Se aceptan varias grafías porque el dictado transcribe "hey" de
+ * Saludos que suelen colarse antes de la palabra clave ("hey mesero", "oye
+ * mesero"). Se aceptan varias grafías porque el dictado transcribe "hey" de
  * formas distintas según el acento.
  */
 const WAKE_PREFIXES = ["hey", "hei", "ey", "hay", "oye", "oiga", "hola", "ok", "okey", "okay"];
@@ -115,13 +108,6 @@ function stripWakeWord(words: string[]): string[] | null {
 
   if (words[i] !== undefined && WAKE_WORDS.includes(words[i])) {
     return words.slice(i + 1);
-  }
-
-  // El dictado suele partir un nombre que no reconoce en dos ("di cu"), así que
-  // también se prueba uniendo las dos palabras siguientes.
-  const joined = `${words[i] ?? ""}${words[i + 1] ?? ""}`;
-  if (joined.length > 0 && WAKE_WORDS.includes(joined)) {
-    return words.slice(i + 2);
   }
 
   return null;
@@ -163,7 +149,7 @@ function extractNumber(words: string[]): number | null {
  * Devuelve el comando reconocido, o null si la frase no es un comando claro.
  *
  * Dos filtros contra el ruido de una cocina:
- *   1. La frase debe empezar con la palabra de activación ("Hey Diccu…").
+ *   1. La frase debe empezar con la palabra de activación ("Hey Mesero…").
  *   2. Debe traer acción y número ("listo 3"); "listo" a secas no hace nada.
  */
 export function parseKitchenCommand(transcript: string): KitchenVoiceCommand | null {
@@ -171,9 +157,15 @@ export function parseKitchenCommand(transcript: string): KitchenVoiceCommand | n
   const words = stripWakeWord(normalize(transcript).split(" ").filter(Boolean));
   if (words === null || words.length === 0) return null;
 
-  // "deshacer" se revisa primero por ser la única orden sin número, y porque
-  // suele decirse justo después de un comando mal entendido: tiene prioridad.
-  if (words.some((word) => UNDO_TRIGGERS.includes(word))) return { action: "deshacer" };
+  // "deshacer" se revisa primero porque es la única orden que funciona sin
+  // número, y porque suele decirse justo después de un comando mal entendido.
+  if (words.some((word) => UNDO_TRIGGERS.includes(word))) {
+    const target = extractNumber(words);
+    return {
+      action: "deshacer",
+      orderNumber: target !== null && target >= 1 ? target : undefined,
+    };
+  }
 
   const orderNumber = extractNumber(words);
   if (orderNumber === null || orderNumber < 1) return null;
