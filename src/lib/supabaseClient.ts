@@ -12,6 +12,11 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+// El chat llama a la Edge Function con fetch directo (functions.invoke no sabe
+// leer respuestas transmitidas), así que necesita la URL y la llave pública.
+export const SUPABASE_URL = supabaseUrl;
+export const SUPABASE_ANON_KEY = supabaseAnonKey;
+
 export const INTERNAL_EMAIL_DOMAIN = "mesero.local";
 
 export function usernameToEmail(username: string): string {

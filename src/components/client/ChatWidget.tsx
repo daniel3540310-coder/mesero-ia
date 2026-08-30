@@ -27,6 +27,8 @@ export function ChatWidget({
   ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [streamingText, setStreamingText] = useState("");
+  const [retryNotice, setRetryNotice] = useState<string | null>(null);
   const [ordering, setOrdering] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,11 +71,23 @@ export function ChatWidget({
     setSending(true);
     setError(null);
 
+    setStreamingText("");
+    setRetryNotice(null);
+
     try {
       const { reply, productIds, orderItems } = await askRestaurantAssistant(
         qrToken,
         text,
-        messages
+        messages,
+        {
+          onDelta: (chunk) => setStreamingText((prev) => prev + chunk),
+          onAttempt: (attempt, totalAttempts) => {
+            // Cada reintento arranca de cero: se borra lo que se alcanzó a
+            // mostrar para no mezclar dos respuestas distintas.
+            setStreamingText("");
+            setRetryNotice(attempt > 1 ? `Reintentando… (${attempt}/${totalAttempts})` : null);
+          },
+        }
       );
       setMessages([...nextMessages, { role: "assistant", content: reply, productIds, orderItems }]);
     } catch (err) {
@@ -82,6 +96,8 @@ export function ChatWidget({
       );
     } finally {
       setSending(false);
+      setStreamingText("");
+      setRetryNotice(null);
     }
   }
 
@@ -196,7 +212,14 @@ export function ChatWidget({
             </div>
           );
         })}
-        {sending && <p className="text-xs text-neutral-400">Escribiendo…</p>}
+        {sending && streamingText && (
+          <div className="max-w-[80%] rounded-2xl bg-neutral-100 px-4 py-2 text-sm text-neutral-800">
+            {streamingText}
+            <span className="ml-0.5 animate-pulse">▍</span>
+          </div>
+        )}
+        {sending && !streamingText && <p className="text-xs text-neutral-400">Escribiendo…</p>}
+        {retryNotice && <p className="text-xs text-amber-600">{retryNotice}</p>}
         {error && <p className="text-xs text-red-600">{error}</p>}
       </div>
       <div className="border-t border-neutral-200 p-3">
