@@ -69,6 +69,9 @@ export function OrdersPage() {
     message: string;
     canUndo?: boolean;
   } | null>(null);
+  // Lo último que captó el micrófono. Se muestra en pantalla para que se vea de
+  // un vistazo si está oyendo, y con qué palabras exactas llega el dictado.
+  const [heard, setHeard] = useState("");
 
   const {
     supported: soundSupported,
@@ -275,14 +278,20 @@ export function OrdersPage() {
     stop: stopVoice,
   } = useSpeechRecognition({
     continuous: true,
-    onResult: (final) => handleVoiceResult(final),
+    onResult: (final, interim) => {
+      const text = (final || interim).trim();
+      if (text) setHeard(text);
+      handleVoiceResult(final);
+    },
   });
 
   async function toggleVoice() {
     if (listening) {
       stopVoice();
+      setHeard("");
       return;
     }
+    setHeard("");
     // El mismo clic desbloquea el audio: los navegadores no dejan sonar nada
     // hasta que el usuario interactúa con la página.
     await enableSound();
@@ -408,6 +417,11 @@ export function OrdersPage() {
           Empieza siempre con <strong>“Diccu”</strong> (o “Hey Diccu”); sin eso se ignora lo que se
           hable en la cocina. Ejemplos: <strong>“Diccu, listo 3”</strong> ·{" "}
           <strong>“Diccu, cancelar 3”</strong> · <strong>“Hey Diccu, deshacer”</strong>.
+        </p>
+      )}
+      {listening && (
+        <p className="mb-3 truncate text-xs text-neutral-400">
+          Micrófono: {heard ? <em>“{heard}”</em> : "esperando a que alguien hable…"}
         </p>
       )}
       {voiceError && <p className="mb-3 text-xs text-red-600">{voiceError}</p>}
