@@ -74,11 +74,26 @@ export interface RestaurantTable {
 
 export type OrderStatus = "pendiente" | "entregado" | "cancelado";
 
+/** Tiempo de la comida al que pertenece un platillo. */
+export type Course = "bebida" | "entrada" | "fuerte" | "postre";
+
+/** En el orden en que la cocina debe sacarlos. */
+export const COURSE_ORDER: Course[] = ["bebida", "entrada", "fuerte", "postre"];
+
+export const COURSE_LABELS: Record<Course, string> = {
+  bebida: "Bebidas",
+  entrada: "Entradas",
+  fuerte: "Plato fuerte",
+  postre: "Postres",
+};
+
 export interface Order {
   id: string;
   restaurant_id: string;
   table_id: string;
   status: OrderStatus;
+  /** Cuántos comensales hay en la mesa; null si no se indicó. */
+  diners: number | null;
   created_at: string;
 }
 
@@ -89,6 +104,9 @@ export interface OrderItem {
   quantity: number;
   removed_ingredients: string[];
   notes: string | null;
+  /** Para qué comensal es. null = para compartir en la mesa. */
+  seat_number: number | null;
+  course: Course;
 }
 
 export type UserRole = "owner" | "restaurant";

@@ -11,6 +11,13 @@ import type {
 import { ProductCard, type CartAddition } from "../../components/client/ProductCard";
 import { CartDrawer, type CartLine } from "../../components/client/CartDrawer";
 import { ChatWidget } from "../../components/client/ChatWidget";
+import { inferCourse } from "../../lib/courses";
+
+/** Comensal más alto de la comanda: sirve para deducir cuántos son en la mesa. */
+function maxSeat(lines: CartLine[]): number | null {
+  const seats = lines.map((l) => l.seat).filter((s): s is number => typeof s === "number");
+  return seats.length > 0 ? Math.max(...seats) : null;
+}
 
 type Tab = "menu" | "chat";
 
@@ -99,9 +106,15 @@ export function ClientMenuPage() {
   }, [ingredients]);
 
   function handleAdd(addition: CartAddition) {
+    // El tiempo sale de la categoría en la que el restaurante puso el platillo.
+    const category = categories.find((c) => c.id === addition.product.category_id);
     setCart((prev) => [
       ...prev,
-      { ...addition, key: `${addition.product.id}-${Date.now()}` },
+      {
+        ...addition,
+        key: `${addition.product.id}-${Date.now()}`,
+        course: inferCourse(category?.name ?? ""),
+      },
     ]);
     setCartOpen(true);
   }
@@ -110,7 +123,7 @@ export function ClientMenuPage() {
     setCart((prev) => prev.filter((l) => l.key !== key));
   }
 
-  async function submitOrder(lines: CartLine[]) {
+  async function submitOrder(lines: CartLine[], diners?: number) {
     if (!restaurant || !table || lines.length === 0) return;
 
     // El cliente que ordena es anónimo y las políticas RLS de "orders" solo
@@ -124,7 +137,15 @@ export function ClientMenuPage() {
     const orderId = crypto.randomUUID();
     const { error: orderError } = await supabase
       .from("orders")
-      .insert({ id: orderId, restaurant_id: restaurant.id, table_id: table.id, status: "pendiente" });
+      .insert({
+        id: orderId,
+        restaurant_id: restaurant.id,
+        table_id: table.id,
+        status: "pendiente",
+        // Si nadie dijo cuántos son, se deduce del comensal más alto que
+        // aparezca en la comanda; null si todo era para compartir.
+        diners: diners ?? maxSeat(lines),
+      });
     if (orderError) throw orderError;
 
     const { error: itemsError } = await supabase.from("order_items").insert(
@@ -134,6 +155,8 @@ export function ClientMenuPage() {
         quantity: line.quantity,
         removed_ingredients: line.removedIngredients,
         notes: line.notes || null,
+        seat_number: line.seat,
+        course: line.course,
       }))
     );
     if (itemsError) throw itemsError;
@@ -152,11 +175,11 @@ export function ClientMenuPage() {
     }
   }
 
-  async function handleOrderFromChat(lines: CartLine[]) {
+  async function handleOrderFromChat(lines: CartLine[], diners?: number) {
     // A diferencia del carrito, un pedido hecho por chat NO saca al cliente
     // a la pantalla completa de confirmación — se queda conversando; el
     // ChatWidget muestra su propia palomita en el mensaje.
-    await submitOrder(lines);
+    await submitOrder(lines, diners);
   }
 
   if (loading) {

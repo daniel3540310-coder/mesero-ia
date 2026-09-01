@@ -1,7 +1,11 @@
+import type { Course } from "../../types/database";
+import { COURSE_LABELS, COURSE_ORDER } from "../../types/database";
 import type { CartAddition } from "./ProductCard";
 
 export interface CartLine extends CartAddition {
   key: string;
+  /** Se deduce de la categoría del platillo al agregarlo al carrito. */
+  course: Course;
 }
 
 export function CartDrawer({
@@ -36,11 +40,21 @@ export function CartDrawer({
           {lines.length === 0 && (
             <p className="text-sm text-neutral-400">Aún no has agregado nada.</p>
           )}
-          {lines.map((line) => (
+          {COURSE_ORDER.filter((course) => lines.some((l) => l.course === course)).map((course) => (
+            <div key={course}>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                {COURSE_LABELS[course]}
+              </p>
+              {lines
+                .filter((l) => l.course === course)
+                .map((line) => (
             <div key={line.key} className="flex items-start justify-between gap-2 border-b border-neutral-100 pb-3">
               <div>
                 <p className="text-sm font-medium">
                   {line.quantity}x {line.product.name}
+                </p>
+                <p className="text-xs text-brand-700">
+                  {line.seat ? `Comensal ${line.seat}` : "Para compartir"}
                 </p>
                 {line.removedIngredients.length > 0 && (
                   <p className="text-xs text-neutral-500">
@@ -60,6 +74,8 @@ export function CartDrawer({
               >
                 Quitar
               </button>
+            </div>
+                ))}
             </div>
           ))}
         </div>

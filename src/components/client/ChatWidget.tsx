@@ -3,10 +3,12 @@ import { askRestaurantAssistant, type ChatMessage, type ProposedOrderItem } from
 import { useSpeechRecognition } from "../../hooks/useSpeechRecognition";
 import type { CartLine } from "./CartDrawer";
 import type { Product } from "../../types/database";
+import { COURSE_LABELS, COURSE_ORDER } from "../../types/database";
 
 interface DisplayMessage extends ChatMessage {
   productIds?: string[];
   orderItems?: ProposedOrderItem[];
+  diners?: number;
   ordered?: boolean;
 }
 
@@ -17,7 +19,7 @@ export function ChatWidget({
 }: {
   qrToken: string;
   products: Product[];
-  onOrder: (lines: CartLine[]) => Promise<void>;
+  onOrder: (lines: CartLine[], diners?: number) => Promise<void>;
 }) {
   const [messages, setMessages] = useState<DisplayMessage[]>([
     {
@@ -75,7 +77,7 @@ export function ChatWidget({
     setRetryNotice(null);
 
     try {
-      const { reply, productIds, orderItems } = await askRestaurantAssistant(
+      const { reply, productIds, orderItems, diners } = await askRestaurantAssistant(
         qrToken,
         text,
         messages,
@@ -89,7 +91,10 @@ export function ChatWidget({
           },
         }
       );
-      setMessages([...nextMessages, { role: "assistant", content: reply, productIds, orderItems }]);
+      setMessages([
+        ...nextMessages,
+        { role: "assistant", content: reply, productIds, orderItems, diners },
+      ]);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "No pudimos contactar al asistente."
@@ -101,17 +106,25 @@ export function ChatWidget({
     }
   }
 
-  async function handleOrder(messageIndex: number, items: ProposedOrderItem[]) {
+  async function handleOrder(
+    messageIndex: number,
+    items: ProposedOrderItem[],
+    diners?: number
+  ) {
     const lines: CartLine[] = items
-      .map((item) => {
+      .map((item, index) => {
         const product = products.find((p) => p.id === item.productId);
         if (!product) return null;
         const line: CartLine = {
-          key: `chat-${item.productId}-${Date.now()}`,
+          // El índice entra en la clave porque una misma mesa puede pedir el
+          // mismo platillo para varios comensales en el mismo instante.
+          key: `chat-${item.productId}-${index}-${Date.now()}`,
           product,
           quantity: item.quantity,
           removedIngredients: [] as string[],
           notes: item.notes ?? "",
+          seat: item.seat ?? null,
+          course: item.course,
         };
         return line;
       })
@@ -122,7 +135,7 @@ export function ChatWidget({
     setOrdering(messageIndex);
     setError(null);
     try {
-      await onOrder(lines);
+      await onOrder(lines, diners);
       setMessages((prev) =>
         prev.map((m, i) => (i === messageIndex ? { ...m, ordered: true } : m))
       );
@@ -181,18 +194,34 @@ export function ChatWidget({
               {orderLines.length > 0 && (
                 <div className="mt-2 rounded-xl border border-brand-200 bg-brand-50 p-3">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-700">
-                    Tu pedido
+                    Tu pedido{m.diners ? ` · ${m.diners} comensales` : ""}
                   </p>
-                  <ul className="mb-2 space-y-1 text-sm">
-                    {orderLines.map(({ item, product }) => (
-                      <li key={item.productId}>
-                        {item.quantity}x {product.name}
-                        {item.notes && (
-                          <span className="text-neutral-500"> — {item.notes}</span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+                  {COURSE_ORDER.filter((course) =>
+                    orderLines.some((l) => l.item.course === course)
+                  ).map((course) => (
+                    <div key={course} className="mb-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                        {COURSE_LABELS[course]}
+                      </p>
+                      <ul className="space-y-0.5 text-sm">
+                        {orderLines
+                          .filter((l) => l.item.course === course)
+                          .map(({ item, product }, lineIndex) => (
+                            // El índice va en la clave porque el mismo platillo
+                            // puede repetirse para comensales distintos.
+                            <li key={`${item.productId}-${lineIndex}`}>
+                              {item.quantity}x {product.name}
+                              <span className="text-brand-700">
+                                {item.seat ? ` · Comensal ${item.seat}` : " · Compartir"}
+                              </span>
+                              {item.notes && (
+                                <span className="text-neutral-500"> — {item.notes}</span>
+                              )}
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  ))}
                   <p className="mb-2 text-sm font-medium">Total: ${total.toFixed(2)}</p>
                   {m.ordered ? (
                     <div className="flex items-center justify-center gap-2 rounded-lg bg-green-100 py-1.5 text-sm font-medium text-green-700">
@@ -200,7 +229,7 @@ export function ChatWidget({
                     </div>
                   ) : (
                     <button
-                      onClick={() => handleOrder(i, m.orderItems!)}
+                      onClick={() => handleOrder(i, m.orderItems!, m.diners)}
                       disabled={ordering === i}
                       className="w-full rounded-lg bg-brand-600 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
                     >

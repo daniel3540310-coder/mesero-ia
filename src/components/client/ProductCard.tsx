@@ -6,6 +6,8 @@ export interface CartAddition {
   quantity: number;
   removedIngredients: string[];
   notes: string;
+  /** Comensal al que va el platillo. null = para compartir en la mesa. */
+  seat: number | null;
 }
 
 export function ProductCard({
@@ -20,6 +22,7 @@ export function ProductCard({
   const [open, setOpen] = useState(false);
   const [removed, setRemoved] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
+  const [seat, setSeat] = useState<number | null>(null);
   const modifiable = ingredients.filter((i) => i.is_modifiable);
   const allergens = ingredients.filter((i) => i.is_allergen);
 
@@ -28,9 +31,10 @@ export function ProductCard({
   }
 
   function handleAdd() {
-    onAdd({ product, quantity: 1, removedIngredients: removed, notes: notes.trim() });
+    onAdd({ product, quantity: 1, removedIngredients: removed, notes: notes.trim(), seat });
     setRemoved([]);
     setNotes("");
+    setSeat(null);
     setOpen(false);
   }
 
@@ -85,6 +89,23 @@ export function ProductCard({
                 </div>
               </div>
             )}
+            <div>
+              <label className="mb-1 block text-xs font-medium text-neutral-600">
+                ¿Para quién es? (opcional)
+              </label>
+              <select
+                value={seat ?? ""}
+                onChange={(e) => setSeat(e.target.value ? Number(e.target.value) : null)}
+                className="w-full rounded-lg border border-neutral-300 px-2 py-1.5 text-sm"
+              >
+                <option value="">Para compartir</option>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                  <option key={n} value={n}>
+                    Comensal {n}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-neutral-600">
                 Notas o especificaciones (opcional):

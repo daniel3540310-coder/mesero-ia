@@ -34,10 +34,73 @@ interface MenuProduct {
   ingredients: { name: string; is_modifiable: boolean; is_allergen: boolean }[];
 }
 
+type Course = "bebida" | "entrada" | "fuerte" | "postre";
+const COURSES: Course[] = ["bebida", "entrada", "fuerte", "postre"];
+
+interface ProposedItem {
+  productId: string;
+  quantity: number;
+  notes?: string;
+  /** Comensal al que va el platillo; se omite si es para compartir. */
+  seat?: number;
+  course: Course;
+}
+
 interface AssistantResult {
   reply: string;
   productIds: string[];
-  orderItems: { productId: string; quantity: number; notes?: string }[];
+  orderItems: ProposedItem[];
+  /** Comensales en la mesa, si el cliente lo dijo. */
+  diners?: number;
+  /**
+   * Cuántas líneas propuso el modelo y cuántas sobrevivieron a la validación.
+   * Solo se incluye cuando se descartó alguna: distingue "el modelo no pidió
+   * nada" de "pidió platillos que no existen en el menú", que se ven igual
+   * desde el cliente pero se arreglan de forma muy distinta.
+   */
+  droppedItems?: { proposed: number; kept: number };
+}
+
+/** Tope duro para que una comanda absurda no tumbe la pantalla de cocina. */
+const MAX_ORDER_ITEMS = 40;
+const MAX_SEATS = 50;
+
+/** Cada producto con el tiempo que le corresponde según su categoría. */
+type MenuIndex = Map<string, { product: MenuProduct; defaultCourse: Course }>;
+
+function stripAccents(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+}
+
+/**
+ * Deduce el tiempo a partir del nombre de la categoría del restaurante. Sirve
+ * de respaldo cuando el modelo no clasifica un platillo, y aprovecha la
+ * organización que el propio restaurante ya le dio a su menú.
+ */
+function inferCourse(categoryName: string): Course {
+  const name = stripAccents(categoryName);
+  if (/bebida|refresco|coctel|cocktail|mocktail|cerveza|beer|vino|wine|jugo|juice|cafe|coffee|licor|trago|agua|water|smoothie|drink|bar|agave|mezcal|tequila|burbuja|champagne|soda|mixolog|mezcalita|margarita|bebidas|barra|refrescos/.test(name)) {
+    return "bebida";
+  }
+  if (/entrada|aperitivo|botana|snack|ensalada|salad|sopa|soup|crema|appetizer|starter|compartir|share|share/.test(name)) return "entrada";
+  if (/postre|dulce|helado|pastel|dessert|sweet|ice cream/.test(name)) return "postre";
+  return "fuerte";
+}
+
+function buildMenuIndex(
+  products: MenuProduct[],
+  categories: { id: string; name: string }[]
+): MenuIndex {
+  const categoryNames = new Map(categories.map((c) => [c.id, c.name]));
+  return new Map(
+    products.map((product) => [
+      product.id,
+      { product, defaultCourse: inferCourse(categoryNames.get(product.category_id) ?? "") },
+    ])
+  );
 }
 
 Deno.serve(async (req) => {
@@ -88,10 +151,12 @@ Deno.serve(async (req) => {
       ]);
 
     const menuProducts = (products ?? []) as MenuProduct[];
+    const menuCategories = (categories ?? []) as { id: string; name: string }[];
+    const menuIndex = buildMenuIndex(menuProducts, menuCategories);
 
     const systemPrompt = buildSystemPrompt({
       restaurant,
-      categories: categories ?? [],
+      categories: menuCategories,
       products: menuProducts,
       policies: policies ?? [],
       knowledge: knowledge ?? [],
@@ -104,8 +169,8 @@ Deno.serve(async (req) => {
     const body = buildGeminiBody(systemPrompt, history ?? [], message);
 
     return stream
-      ? await streamAnswer(apiKey, body, menuProducts)
-      : await completeAnswer(apiKey, body, menuProducts);
+      ? await streamAnswer(apiKey, body, menuIndex)
+      : await completeAnswer(apiKey, body, menuIndex);
   } catch (err) {
     console.error(err);
     return jsonResponse({ error: "Error interno del asistente." }, 500);
@@ -149,7 +214,7 @@ function buildGeminiBody(systemPrompt: string, history: ChatMessage[], message: 
         type: "OBJECT",
         // "reply" va primero a propósito: al transmitir la respuesta se puede
         // ir mostrando el texto sin esperar al resto del JSON.
-        propertyOrdering: ["reply", "productIds", "orderItems"],
+        propertyOrdering: ["reply", "productIds", "orderItems", "diners"],
         properties: {
           reply: { type: "STRING" },
           productIds: { type: "ARRAY", items: { type: "STRING" } },
@@ -157,14 +222,27 @@ function buildGeminiBody(systemPrompt: string, history: ChatMessage[], message: 
             type: "ARRAY",
             items: {
               type: "OBJECT",
+              // "seat" va como obligatorio-pero-anulable a propósito:
+              // declarado como opcional el modelo lo omitía y colapsaba a
+              // varias personas en una sola línea. Obligarlo a escribir null
+              // es lo que hace que reparta bien por comensal.
+              //
+              // "course" NO se le pide al modelo: al tener que elegir a la vez
+              // comensal y tiempo dejaba de proponer nada en comandas de
+              // varias personas con bebidas. El tiempo se deduce en el
+              // servidor desde la categoría del menú, que es más fiable y ya
+              // refleja cómo el restaurante organizó su carta.
+              propertyOrdering: ["productId", "seat", "quantity", "notes"],
               properties: {
                 productId: { type: "STRING" },
+                seat: { type: "INTEGER", nullable: true },
                 quantity: { type: "INTEGER" },
-                notes: { type: "STRING" },
+                notes: { type: "STRING", nullable: true },
               },
-              required: ["productId", "quantity"],
+              required: ["productId", "seat", "quantity"],
             },
           },
+          diners: { type: "INTEGER" },
         },
         required: ["reply"],
       },
@@ -191,7 +269,7 @@ async function callGemini(url: string, body: unknown): Promise<Response> {
 async function completeAnswer(
   apiKey: string,
   body: unknown,
-  products: MenuProduct[]
+  menu: MenuIndex
 ): Promise<Response> {
   const response = await callGemini(geminiUrl(apiKey, false), body);
 
@@ -211,7 +289,7 @@ async function completeAnswer(
   const rawText: string =
     data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
 
-  return jsonResponse(buildResult(rawText, products));
+  return jsonResponse(buildResult(rawText, menu));
 }
 
 /**
@@ -226,7 +304,7 @@ async function completeAnswer(
 async function streamAnswer(
   apiKey: string,
   body: unknown,
-  products: MenuProduct[]
+  menu: MenuIndex
 ): Promise<Response> {
   const upstream = await callGemini(geminiUrl(apiKey, true), body);
 
@@ -291,7 +369,7 @@ async function streamAnswer(
           }
         }
 
-        send("done", buildResult(rawJson, products));
+        send("done", buildResult(rawJson, menu));
       } catch (err) {
         console.error("Gemini stream interrumpido:", err);
         send("error", { error: "Se interrumpió la respuesta del asistente." });
@@ -358,7 +436,7 @@ function extractPartialReply(json: string): string | null {
  * ids que devuelve: podría inventar un platillo que no existe o proponer uno
  * agotado.
  */
-function buildResult(rawText: string, products: MenuProduct[]): AssistantResult {
+function buildResult(rawText: string, menu: MenuIndex): AssistantResult {
   const result: AssistantResult = {
     reply: "No tengo una respuesta para eso en este momento.",
     productIds: [],
@@ -369,29 +447,55 @@ function buildResult(rawText: string, products: MenuProduct[]): AssistantResult 
     const parsed = JSON.parse(rawText) as {
       reply?: string;
       productIds?: string[];
-      orderItems?: { productId?: string; quantity?: number; notes?: string }[];
+      orderItems?: {
+        productId?: string;
+        quantity?: number;
+        notes?: string;
+        seat?: number;
+        course?: string;
+      }[];
+      diners?: number;
     };
     if (parsed.reply) result.reply = parsed.reply;
 
-    const byId = new Map(products.map((p) => [p.id, p]));
-
     if (Array.isArray(parsed.productIds)) {
-      result.productIds = parsed.productIds.filter((id) => byId.has(id));
+      result.productIds = parsed.productIds.filter((id) => menu.has(id));
     }
 
     if (Array.isArray(parsed.orderItems)) {
       result.orderItems = parsed.orderItems
-        .filter(
-          (item): item is { productId: string; quantity?: number; notes?: string } =>
-            !!item.productId && !!byId.get(item.productId)?.is_available
-        )
-        .map((item) => ({
-          productId: item.productId,
-          quantity: Math.min(Math.max(Math.trunc(item.quantity ?? 1), 1), 20),
-          notes:
-            typeof item.notes === "string" && item.notes.trim() ? item.notes.trim() : undefined,
-        }));
+        .filter((item) => !!item.productId && !!menu.get(item.productId)?.product.is_available)
+        // Tope duro: una comanda de cientos de líneas solo puede ser un error
+        // del modelo, y dejarla pasar bloquearía la pantalla de cocina.
+        .slice(0, MAX_ORDER_ITEMS)
+        .map((item) => {
+          const entry = menu.get(item.productId!)!;
+          const seat = Math.trunc(item.seat ?? 0);
+          const course = COURSES.includes(item.course as Course)
+            ? (item.course as Course)
+            : entry.defaultCourse;
+
+          return {
+            productId: item.productId!,
+            quantity: Math.min(Math.max(Math.trunc(item.quantity ?? 1), 1), 20),
+            notes:
+              typeof item.notes === "string" && item.notes.trim() ? item.notes.trim() : undefined,
+            // Un comensal fuera de rango se trata como "para compartir": es
+            // preferible a asignar el platillo a una persona inventada.
+            seat: seat >= 1 && seat <= MAX_SEATS ? seat : undefined,
+            course,
+          };
+        });
     }
+
+    const proposed = Array.isArray(parsed.orderItems) ? parsed.orderItems.length : 0;
+    if (proposed !== result.orderItems.length) {
+      console.error("orderItems descartados:", { proposed, kept: result.orderItems.length });
+      result.droppedItems = { proposed, kept: result.orderItems.length };
+    }
+
+    const diners = Math.trunc(parsed.diners ?? 0);
+    if (diners >= 1 && diners <= MAX_SEATS) result.diners = diners;
   } catch {
     // Si el modelo no devolvió JSON válido (raro con responseSchema), se usa el
     // texto crudo como respuesta, sin imágenes ni pedido.
@@ -484,5 +588,40 @@ REGLAS ESTRICTAS:
 - Si el cliente todavía está preguntando, decidiendo, o no ha confirmado
   cantidades, deja "orderItems" vacío — no asumas que quiere ordenar.
 - Nunca pongas en "orderItems" un platillo que el cliente no pidió
-  explícitamente, aunque lo hayas recomendado.`;
+  explícitamente, aunque lo hayas recomendado.
+
+MESAS CON VARIOS COMENSALES:
+- Si en la mesa comen varias personas, usa "seat" para indicar a qué comensal
+  va cada platillo, numerándolos como los nombre el cliente (persona 1, 2, 3…).
+  Mantén el mismo número para la misma persona durante toda la conversación.
+- Deja "seat" vacío solo cuando el platillo sea para compartir entre todos.
+- Nunca inventes comensales ni repartas platillos por tu cuenta: si el cliente
+  no dijo para quién es cada cosa, deja "seat" vacío y pregúntale.
+- Si el cliente dice cuántos son, ponlo en "diners".
+- Una sola línea de "orderItems" por comensal: para dos personas que quieren lo
+  mismo, usa dos entradas con cantidad 1 y distinto "seat", no una con
+  cantidad 2. Solo agrupa en cantidad cuando sea para compartir.
+
+TIEMPOS DE LA COMIDA:
+- No tienes que clasificar los platillos por tiempo: el sistema los agrupa solo
+  (bebidas, entradas, fuertes, postres) según la categoría del menú.
+- Si el cliente pide un platillo en un tiempo distinto al habitual ("la
+  ensalada de entrada"), anótalo en "notes" para que la cocina lo vea.
+
+MUY IMPORTANTE: si ya confirmaste el pedido en tu respuesta, SIEMPRE llena
+"orderItems", por larga que sea la comanda. Confirmar de palabra y dejar
+"orderItems" vacío deja al cliente sin poder ordenar.
+
+Ejemplo de una comanda de varios comensales ya confirmada ("de entrada papas
+para compartir; persona 1 y persona 2 quieren hamburguesa, la 2 sin cebolla;
+y un refresco para cada una"):
+  "orderItems": [
+    { "productId": "<id papas>",       "seat": null, "quantity": 1 },
+    { "productId": "<id hamburguesa>", "seat": 1, "quantity": 1 },
+    { "productId": "<id hamburguesa>", "seat": 2, "quantity": 1, "notes": "sin cebolla" },
+    { "productId": "<id refresco>",    "seat": 1, "quantity": 1 },
+    { "productId": "<id refresco>",    "seat": 2, "quantity": 1 }
+  ]
+Las papas van sin "seat" por ser para compartir, y cada comensal tiene su
+propia línea aunque dos pidan lo mismo.`;
 }

@@ -1,3 +1,4 @@
+import type { Course } from "../types/database";
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./supabaseClient";
 
 export interface ChatMessage {
@@ -9,12 +10,17 @@ export interface ProposedOrderItem {
   productId: string;
   quantity: number;
   notes?: string;
+  /** Comensal al que va el platillo; ausente si es para compartir. */
+  seat?: number;
+  course: Course;
 }
 
 export interface AssistantReply {
   reply: string;
   productIds: string[];
   orderItems: ProposedOrderItem[];
+  /** Comensales en la mesa, si el cliente lo mencionó. */
+  diners?: number;
 }
 
 export interface AskOptions {
@@ -133,6 +139,7 @@ async function completeRequest(payload: RequestPayload): Promise<AssistantReply>
       reply: data.reply ?? "",
       productIds: data.productIds ?? [],
       orderItems: data.orderItems ?? [],
+      diners: data.diners,
     };
   } catch (err) {
     throw asAssistantError(err);
@@ -195,6 +202,7 @@ async function streamRequest(
             reply: typeof data.reply === "string" ? data.reply : "",
             productIds: Array.isArray(data.productIds) ? data.productIds : [],
             orderItems: Array.isArray(data.orderItems) ? data.orderItems : [],
+            diners: typeof data.diners === "number" ? data.diners : undefined,
           };
         } else if (event === "error") {
           throw new AssistantError(
@@ -225,6 +233,7 @@ interface SseData {
   reply?: unknown;
   productIds?: unknown;
   orderItems?: unknown;
+  diners?: unknown;
 }
 
 function parseSseBlock(block: string): { event: string | null; data: SseData | null } {

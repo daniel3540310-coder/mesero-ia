@@ -11,6 +11,7 @@ import type {
   Product,
   RestaurantTable,
 } from "../../types/database";
+import { COURSE_LABELS, COURSE_ORDER } from "../../types/database";
 
 interface OrderView extends Order {
   table: RestaurantTable | null;
@@ -358,7 +359,14 @@ export function OrdersPage() {
               </span>
             )}
             <div>
-              <p className="font-medium">{order.table?.label ?? "Mesa desconocida"}</p>
+              <p className="font-medium">
+                {order.table?.label ?? "Mesa desconocida"}
+                {order.diners ? (
+                  <span className="ml-1 text-xs font-normal text-neutral-500">
+                    · {order.diners} pers.
+                  </span>
+                ) : null}
+              </p>
               <p className="text-xs text-neutral-400">
                 {new Date(order.created_at).toLocaleTimeString()}
               </p>
@@ -379,20 +387,38 @@ export function OrdersPage() {
           )}
         </div>
 
-        <ul className="mb-3 space-y-1 text-sm">
-          {order.items.map((item) => (
-            <li key={item.id}>
-              {item.quantity}x {item.product?.name ?? "Producto eliminado"}
-              {item.removed_ingredients.length > 0 && (
-                <span className="text-neutral-500">
-                  {" "}
-                  (sin {item.removed_ingredients.join(", ")})
-                </span>
-              )}
-              {item.notes && <span className="text-neutral-500"> — {item.notes}</span>}
-            </li>
-          ))}
-        </ul>
+        <div className="mb-3 space-y-2">
+          {COURSE_ORDER.filter((course) => order.items.some((i) => i.course === course)).map(
+            (course) => (
+              <div key={course}>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                  {COURSE_LABELS[course]}
+                </p>
+                <ul className="space-y-0.5 text-sm">
+                  {order.items
+                    .filter((i) => i.course === course)
+                    // Por comensal, y lo de compartir al final.
+                    .sort((a, b) => (a.seat_number ?? 99) - (b.seat_number ?? 99))
+                    .map((item) => (
+                      <li key={item.id}>
+                        <span className="font-medium text-neutral-500">
+                          {item.seat_number ? `C${item.seat_number}` : "Mesa"}
+                        </span>{" "}
+                        {item.quantity}x {item.product?.name ?? "Producto eliminado"}
+                        {item.removed_ingredients.length > 0 && (
+                          <span className="text-neutral-500">
+                            {" "}
+                            (sin {item.removed_ingredients.join(", ")})
+                          </span>
+                        )}
+                        {item.notes && <span className="text-neutral-500"> — {item.notes}</span>}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            )
+          )}
+        </div>
 
         {isPending && (
           <div className="flex gap-2">
