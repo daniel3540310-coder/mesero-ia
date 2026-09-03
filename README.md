@@ -1,14 +1,15 @@
 # Mesero IA
 
 SaaS para restaurantes: los clientes escanean un QR por mesa, ven el menú y hablan con un
-asistente de IA (Gemini) que responde únicamente con la información que el restaurante
+mesero digital que toma la comanda usando únicamente la información que el restaurante
 configuró. Ver [claude.md](./claude.md) para la especificación completa del producto.
 
 ## Stack
 
 - Frontend: React + TypeScript + Vite + Tailwind CSS
 - Backend: Supabase (Postgres + Auth + Storage + Edge Functions)
-- IA: Google Gemini (llamada desde una Edge Function, nunca desde el navegador)
+- Motor de comandas: determinista, en TypeScript, dentro del navegador
+  (`src/lib/orderEngine`) — sin modelos de lenguaje ni servicios externos
 - Deploy: Vercel (frontend) + Supabase (backend)
 
 ## Estado del código
@@ -35,18 +36,13 @@ configuración de tu propio proyecto de Supabase — no falta código.
    (o `supabase db push` si usas la CLI vinculada a tu proyecto). Crea todas las
    tablas, RLS y el bucket de Storage `menu-images`.
 
-3. **Desplegar las Edge Functions**:
+3. **Desplegar la Edge Function de administración** (crea las cuentas de los
+   restaurantes; el chat ya no usa ninguna):
    ```
-   supabase functions deploy gemini-chat
    supabase functions deploy admin-restaurants
    ```
 
-4. **Configurar el secret de Gemini** (la Edge Function lo usa, no el frontend):
-   ```
-   supabase secrets set GEMINI_API_KEY=tu-gemini-api-key-desde-.env
-   ```
-
-5. **Crear al usuario Owner** (no existe registro público, este es el único mecanismo):
+4. **Crear al usuario Owner** (no existe registro público, este es el único mecanismo):
    ```
    SUPABASE_URL=https://tu-proyecto.supabase.co ^
    SUPABASE_SERVICE_ROLE_KEY=tu-service-role-key ^
@@ -57,7 +53,7 @@ configuración de tu propio proyecto de Supabase — no falta código.
    (`SUPABASE_SERVICE_ROLE_KEY` está en Settings → API → service_role. Nunca la pongas
    en `.env` del frontend ni la subas a git.)
 
-6. Inicia sesión en `/login` con ese usuario/contraseña → entrarás al panel Owner, desde
+5. Inicia sesión en `/login` con ese usuario/contraseña → entrarás al panel Owner, desde
    donde puedes crear restaurantes (eso crea su usuario/contraseña automáticamente vía
    `admin-restaurants`).
 
@@ -77,9 +73,11 @@ contra Supabase (login, menú, pedidos, chat) fallará con un error de credencia
 - **Autenticación sin email real**: Owner y Restaurante usan Supabase Auth con un email
   interno `usuario@mesero.local`. El usuario nunca ve ni usa ese email, solo su
   username.
-- **Gemini nunca se llama desde el navegador**: la Edge Function `gemini-chat` arma el
-  contexto del restaurante (menú, políticas, info autorizada) y llama a Gemini
-  server-side, para no exponer la API key en el bundle público.
+- **El chat no usa ningún modelo de lenguaje**: `src/lib/orderEngine` interpreta lo
+  que escribe o dicta el cliente (intenciones, búsqueda difusa contra la carta,
+  validación de modificadores contra los ingredientes reales) y responde al
+  instante, sin costo por mensaje, sin cuotas externas y sin posibilidad de
+  inventar platillos. Las reglas no modificables se rechazan, no se "sugieren".
 - **El chat no se persiste en base de datos** en este MVP: vive en memoria del cliente
   durante la sesión, para mantener el alcance simple.
 - **El QR de cada mesa** codifica una URL `/menu/:qrToken`; el token actúa como

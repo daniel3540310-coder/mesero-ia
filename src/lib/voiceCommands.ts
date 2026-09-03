@@ -1,3 +1,5 @@
+import { findNumber } from "./spanishNumbers";
+
 /**
  * Interpretación de comandos de voz de la cocina.
  *
@@ -47,24 +49,6 @@ const CANCEL_TRIGGERS = [
  * ("deshacer 2") devuelven esa comanda concreta a preparación.
  */
 const UNDO_TRIGGERS = ["deshacer", "deshaz", "revertir", "revierte", "reversa"];
-
-/**
- * El dictado en español casi nunca devuelve dígitos ("listo tres", no
- * "listo 3"), así que hay que entender también los números escritos.
- */
-const NUMBER_WORDS: Record<string, number> = {
-  uno: 1, una: 1, un: 1,
-  dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9,
-  diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15,
-  dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19,
-  veinte: 20, veintiuno: 21, veintiuna: 21, veintidos: 22, veintitres: 23,
-  veinticuatro: 24, veinticinco: 25, veintiseis: 26, veintisiete: 27,
-  veintiocho: 28, veintinueve: 29,
-  treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60,
-  setenta: 70, ochenta: 80, noventa: 90,
-};
-
-const TENS = new Set([30, 40, 50, 60, 70, 80, 90]);
 
 /**
  * Palabra de activación: "Mesero". Sin ella no se procesa absolutamente nada:
@@ -123,29 +107,6 @@ export function hasWakeWord(transcript: string): boolean {
 }
 
 /**
- * Extrae el primer número de la frase, ya venga en dígitos ("3") o en palabras
- * ("tres", "treinta y uno").
- */
-function extractNumber(words: string[]): number | null {
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i];
-
-    if (/^\d+$/.test(word)) return Number(word);
-
-    const value = NUMBER_WORDS[word];
-    if (value === undefined) continue;
-
-    // "treinta y uno" y similares: decena + y + unidad.
-    if (TENS.has(value) && words[i + 1] === "y") {
-      const unit = NUMBER_WORDS[words[i + 2] ?? ""];
-      if (unit !== undefined && unit < 10) return value + unit;
-    }
-    return value;
-  }
-  return null;
-}
-
-/**
  * Devuelve el comando reconocido, o null si la frase no es un comando claro.
  *
  * Dos filtros contra el ruido de una cocina:
@@ -160,14 +121,14 @@ export function parseKitchenCommand(transcript: string): KitchenVoiceCommand | n
   // "deshacer" se revisa primero porque es la única orden que funciona sin
   // número, y porque suele decirse justo después de un comando mal entendido.
   if (words.some((word) => UNDO_TRIGGERS.includes(word))) {
-    const target = extractNumber(words);
+    const target = findNumber(words)?.value ?? null;
     return {
       action: "deshacer",
       orderNumber: target !== null && target >= 1 ? target : undefined,
     };
   }
 
-  const orderNumber = extractNumber(words);
+  const orderNumber = findNumber(words)?.value ?? null;
   if (orderNumber === null || orderNumber < 1) return null;
 
   // Cancelar antes que entregar: si por alguna razón se colaran las dos

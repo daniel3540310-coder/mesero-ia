@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "../../lib/supabaseClient";
 import type {
+  AiKnowledge,
   Category,
   Ingredient,
+  Policy,
   Product,
   Restaurant,
   RestaurantTable,
@@ -30,6 +32,10 @@ export function ClientMenuPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  // Reglas del restaurante: el motor las usa para responder y para validar
+  // qué se puede modificar de cada platillo.
+  const [policies, setPolicies] = useState<Policy[]>([]);
+  const [knowledge, setKnowledge] = useState<AiKnowledge[]>([]);
   const [tab, setTab] = useState<Tab>("menu");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
@@ -66,7 +72,7 @@ export function ClientMenuPage() {
       }
       setRestaurant(restaurantData as Restaurant);
 
-      const [{ data: cats }, { data: prods }] = await Promise.all([
+      const [{ data: cats }, { data: prods }, { data: pols }, { data: know }] = await Promise.all([
         supabase
           .from("categories")
           .select("*")
@@ -77,7 +83,18 @@ export function ClientMenuPage() {
           .select("*")
           .eq("restaurant_id", (restaurantData as Restaurant).id)
           .eq("is_available", true),
+        supabase
+          .from("policies")
+          .select("*")
+          .eq("restaurant_id", (restaurantData as Restaurant).id)
+          .order("sort_order"),
+        supabase
+          .from("ai_knowledge")
+          .select("*")
+          .eq("restaurant_id", (restaurantData as Restaurant).id),
       ]);
+      setPolicies((pols as Policy[]) ?? []);
+      setKnowledge((know as AiKnowledge[]) ?? []);
       setCategories((cats as Category[]) ?? []);
       const productList = (prods as Product[]) ?? [];
       setProducts(productList);
@@ -269,7 +286,16 @@ export function ClientMenuPage() {
         </div>
       ) : (
         <div className="mx-auto h-[70vh] max-w-2xl">
-          <ChatWidget qrToken={qrToken!} products={products} onOrder={handleOrderFromChat} />
+          <ChatWidget
+            restaurantName={restaurant.name}
+            tableLabel={table.label}
+            categories={categories}
+            products={products}
+            ingredients={ingredients}
+            policies={policies}
+            knowledge={knowledge}
+            onOrder={handleOrderFromChat}
+          />
         </div>
       )}
 
