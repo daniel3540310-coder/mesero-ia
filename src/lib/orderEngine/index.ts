@@ -6,5 +6,5 @@
  * mensaje, sin cuotas que se agoten y sin posibilidad de que invente platillos.
  */
 export { processTurn, emptyDraft, summarize } from "./engine";
-export type { OrderDraft, DraftLine, EngineContext, TurnResult } from "./engine";
+export type { OrderDraft, DraftLine, EngineContext, TurnResult, ChatTurn } from "./engine";
 export { findProduct, searchProducts } from "./match";

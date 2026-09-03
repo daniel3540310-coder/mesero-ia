@@ -43,11 +43,26 @@ export interface EngineContext {
   knowledge: AiKnowledge[];
 }
 
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface TurnResult {
   reply: string;
   draft: OrderDraft;
   /** Platillos mencionados en este turno, para mostrar sus fotos. */
   productIds: string[];
+  /**
+   * El motor no tiene nada fundamentado que responder: no era una acción de
+   * comanda ni una consulta que se pueda contestar con los datos del
+   * restaurante. Quien llama puede delegarlo a la consulta abierta.
+   *
+   * A propósito NO se marca en las preguntas de alérgenos sin datos: ahí la
+   * respuesta prudente ("no me consta, preguntemos a un mesero") es mejor que
+   * arriesgar una suposición sobre algo que puede mandar a alguien al hospital.
+   */
+  fallback?: boolean;
 }
 
 export const emptyDraft = (): OrderDraft => ({ lines: [], diners: null, currentSeat: null });
@@ -152,11 +167,18 @@ export function processTurn(text: string, draft: OrderDraft, ctx: EngineContext)
     return { reply: pick(["¡Con gusto!", "A la orden.", "Para servirte."]), draft: working, productIds: [] };
   }
 
-  // Último recurso: se nombró algo que no está en la carta, o no se entendió.
-  if (unmatched.length > 0) {
+  // "No lo tenemos en la carta" solo tiene sentido si el cliente estaba
+  // pidiendo algo. Una pregunta cualquiera no es un platillo inexistente: se
+  // marca como duda abierta para que el chat la delegue.
+  const firstToken = tokens(norm)[0] ?? "";
+  const looksLikeOrder =
+    ORDER_VERB.test(norm) || SEAT_RE.test(norm) || findNumber([firstToken]) !== null;
+
+  if (unmatched.length > 0 && looksLikeOrder) {
     return { reply: notFound(unmatched, ctx), draft: working, productIds: [] };
   }
-  return { reply: notUnderstood(norm, ctx), draft: working, productIds: [] };
+
+  return { reply: notUnderstood(), draft: working, productIds: [], fallback: true };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -172,6 +194,10 @@ interface ParsedSegment {
   removalPhrase: string;
   rest: string;
 }
+
+/** Verbos con los que alguien pide algo; sirven para distinguir un pedido de una pregunta. */
+const ORDER_VERB =
+  /\b(quiero|queremos|quisiera|quisieramos|dame|danos|ponme|ponnos|pon|traeme|traenos|trae|traiga|agrega|agregame|anota|anotame|pido|pedimos|me das|nos das|sirveme|sirvenos)\b/;
 
 const SEAT_RE = /\b(?:persona|comensal|invitado|silla|puesto)\s+(\S+)/;
 const FOR_RE = /\bpara\s+(?:el|la)?\s*(\S+)/;
@@ -548,19 +574,16 @@ function handleQuestion(norm: string, raw: string, ctx: EngineContext): TurnResu
   const draft = emptyDraft();
 
   if (RE.recomendacion.test(norm)) {
-    const star = ctx.knowledge.find((k) => k.category === "platillo_estrella" || k.category === "recomendacion");
-    if (star) {
-      return { reply: `${star.title}: ${star.content}`, draft, productIds: [] };
-    }
-    const suggestions = ctx.products.filter((p) => p.is_available).slice(0, 3);
-    if (suggestions.length === 0) return null;
-    return {
-      reply: `Te recomiendo ${suggestions
-        .map((p) => `${p.name} ($${p.price.toFixed(2)})`)
-        .join(", ")}. ¿Te sirvo alguno?`,
-      draft,
-      productIds: suggestions.map((p) => p.id),
-    };
+    const star = ctx.knowledge.find(
+      (k) => k.category === "platillo_estrella" || k.category === "recomendacion"
+    );
+    // Solo se contesta local si el restaurante escribió su recomendación. Sin
+    // eso, listar los tres primeros platillos de la carta sería una respuesta
+    // pobre: es mejor dejar que la consulta abierta la resuelva con criterio
+    // ("algo para acompañar la hamburguesa" pide entender el maridaje, no
+    // recitar el menú).
+    if (star) return { reply: `${star.title}: ${star.content}`, draft, productIds: [] };
+    return null;
   }
 
   if (RE.precio.test(norm) || RE.ingredientes.test(norm) || RE.alergenos.test(norm)) {
@@ -656,11 +679,11 @@ function notFound(unmatched: string[], ctx: EngineContext): string {
   return `No encontré "${unmatched[0]}" en el menú. Si quieres te digo qué tenemos disponible.`;
 }
 
-function notUnderstood(norm: string, ctx: EngineContext): string {
-  const alternatives = searchProducts(norm, ctx.products, 3);
-  if (alternatives.length > 0) {
-    return `¿Te refieres a ${alternatives.map((p) => p.name).join(" o ")}?`;
-  }
+/**
+ * Solo se usa si la consulta abierta tampoco está disponible: el chat prefiere
+ * delegar la duda antes que contestar con un "no entendí".
+ */
+function notUnderstood(): string {
   return pick([
     'No te entendí bien. Puedes decirme "quiero una hamburguesa" o pedirme el menú.',
     'Perdón, no capté eso. Dime qué te sirvo o escribe "menú" para ver la carta.',

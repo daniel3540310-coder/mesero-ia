@@ -287,6 +287,7 @@ export function ClientMenuPage() {
       ) : (
         <div className="mx-auto h-[70vh] max-w-2xl">
           <ChatWidget
+            qrToken={qrToken!}
             restaurantName={restaurant.name}
             tableLabel={table.label}
             categories={categories}

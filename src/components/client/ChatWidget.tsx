@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { useSpeechRecognition } from "../../hooks/useSpeechRecognition";
+import { ASSISTANT_UNAVAILABLE, askOpenQuestion } from "../../lib/askAssistant";
 import {
   emptyDraft,
   processTurn,
@@ -24,6 +25,7 @@ interface DisplayMessage {
 }
 
 export function ChatWidget({
+  qrToken,
   restaurantName,
   tableLabel,
   categories,
@@ -33,6 +35,7 @@ export function ChatWidget({
   knowledge,
   onOrder,
 }: {
+  qrToken: string;
   restaurantName: string;
   tableLabel: string;
   categories: Category[];
@@ -71,6 +74,9 @@ export function ChatWidget({
   const [ordering, setOrdering] = useState(false);
   const [ordered, setOrdered] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Consulta abierta en vuelo. No bloquea nada: el cliente puede seguir
+  // pidiendo mientras llega (o mientras no llega).
+  const [consulting, setConsulting] = useState(false);
 
   // Lo que ya estaba escrito cuando empezó el dictado: el texto reconocido se
   // agrega a eso en vez de reemplazarlo.
@@ -113,11 +119,40 @@ export function ChatWidget({
     // red de por medio ni estados de carga.
     const result = processTurn(text, draft, ctx);
     setDraft(result.draft);
+
+    const history = messages.map((m) => ({ role: m.role, content: m.content }));
+
     setMessages((prev) => [
       ...prev,
       { role: "user", content: text },
-      { role: "assistant", content: result.reply, productIds: result.productIds },
+      // En una duda abierta no se muestra el "no entendí" del motor: se pasa
+      // directo a consultar, y el mensaje definitivo llega después.
+      ...(result.fallback
+        ? []
+        : [{ role: "assistant" as const, content: result.reply, productIds: result.productIds }]),
     ]);
+
+    if (result.fallback) askOpenQuestionSafely(text, history);
+  }
+
+  /**
+   * Duda abierta: se delega a Gemini en segundo plano.
+   *
+   * Está aislado del pedido a propósito. `askOpenQuestion` nunca lanza, así que
+   * un fallo de cuota, un 503 o quedarse sin red no pueden congelar el chat ni
+   * tocar la comanda; en el peor caso el comensal ve un mensaje amable y sigue
+   * ordenando con el motor local.
+   */
+  function askOpenQuestionSafely(question: string, history: { role: "user" | "assistant"; content: string }[]) {
+    setConsulting(true);
+    askOpenQuestion(qrToken, question, history)
+      .then((answer) => {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: answer ?? ASSISTANT_UNAVAILABLE },
+        ]);
+      })
+      .finally(() => setConsulting(false));
   }
 
   async function handleOrder() {
@@ -187,6 +222,7 @@ export function ChatWidget({
             </div>
           );
         })}
+        {consulting && <p className="text-xs text-neutral-400">Déjame consultar…</p>}
         {ordered && (
           <p className="text-center text-xs font-medium text-green-700">✅ Pedido enviado a cocina</p>
         )}
