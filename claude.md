@@ -27,8 +27,25 @@ Backend
 Base de datos
 - PostgreSQL (Supabase)
 
-IA
-- Gemini API
+Toma de comandas
+- Motor determinista propio en TypeScript (`src/lib/orderEngine`), ejecutado en
+  el navegador.
+- Interpreta intenciones, busca los platillos en la carta del restaurante con
+  búsqueda difusa y valida las modificaciones contra los ingredientes reales.
+- Respuesta instantánea, sin costo por mensaje y sin depender de ningún
+  servicio externo.
+
+Consultas abiertas (respaldo)
+- Gemini API, únicamente para dudas que el motor no puede responder con los
+  datos del restaurante (recomendaciones de maridaje, historia del local,
+  formas de pago).
+- Nunca toca el pedido: solo devuelve texto.
+- Totalmente aislado: si falla —cuota agotada, error del servicio, sin red— el
+  chat avisa con un mensaje amable y la toma de comandas sigue funcionando
+  igual.
+- Las preguntas sobre alérgenos NO se delegan: sin datos cargados se responde
+  "no me consta, preguntemos a un mesero", porque una suposición ahí es
+  peligrosa.
 
 Deploy
 - Vercel
@@ -230,6 +247,10 @@ Ejemplos:
 La IA únicamente responderá utilizando esta información.
 
 Nunca inventará respuestas.
+
+Esta información alimenta a los dos: al motor de comandas, que la usa para
+responder precios, ingredientes, alérgenos y políticas; y al respaldo de
+consultas abiertas, cuyo prompt se arma exclusivamente con ella.
 
 ---
 
