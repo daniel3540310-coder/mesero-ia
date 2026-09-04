@@ -16,8 +16,11 @@ const TIMEOUT_MS = 12_000;
 export const ASSISTANT_UNAVAILABLE =
   "El asistente de consultas no está disponible en este momento, pero con gusto te ayudo con tu orden. ¿Qué te gustaría pedir?";
 
+/** De dónde viene el comensal: la mesa del QR o el enlace de domicilio. */
+export type AssistantScope = { qrToken: string } | { slug: string };
+
 export async function askOpenQuestion(
-  qrToken: string,
+  scope: AssistantScope,
   question: string,
   history: ChatTurn[]
 ): Promise<string | null> {
@@ -32,7 +35,7 @@ export async function askOpenQuestion(
         apikey: SUPABASE_ANON_KEY,
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
       },
-      body: JSON.stringify({ qrToken, question, history }),
+      body: JSON.stringify({ ...scope, question, history }),
       signal: controller.signal,
     });
 

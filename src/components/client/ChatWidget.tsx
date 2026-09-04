@@ -1,14 +1,8 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { useSpeechRecognition } from "../../hooks/useSpeechRecognition";
-import { ASSISTANT_UNAVAILABLE, askOpenQuestion } from "../../lib/askAssistant";
-import {
-  emptyDraft,
-  processTurn,
-  type DraftLine,
-  type EngineContext,
-  type OrderDraft,
-} from "../../lib/orderEngine";
-import type { CartLine } from "./CartDrawer";
+import { ASSISTANT_UNAVAILABLE, askOpenQuestion, type AssistantScope } from "../../lib/askAssistant";
+import { processTurn, type EngineContext } from "../../lib/orderEngine";
+import { useCart } from "../../contexts/CartContext";
 import type {
   AiKnowledge,
   Category,
@@ -25,7 +19,7 @@ interface DisplayMessage {
 }
 
 export function ChatWidget({
-  qrToken,
+  scope,
   restaurantName,
   tableLabel,
   categories,
@@ -34,8 +28,9 @@ export function ChatWidget({
   policies,
   knowledge,
   onOrder,
+  confirmationMessage = "¡Listo! Tu pedido ya está en cocina. ¿Te sirvo algo más?",
 }: {
-  qrToken: string;
+  scope: AssistantScope;
   restaurantName: string;
   tableLabel: string;
   categories: Category[];
@@ -43,7 +38,9 @@ export function ChatWidget({
   ingredients: Ingredient[];
   policies: Policy[];
   knowledge: AiKnowledge[];
-  onOrder: (lines: CartLine[], diners?: number) => Promise<void>;
+  onOrder: () => Promise<void>;
+  /** Qué decir tras enviar: no es lo mismo una mesa que un domicilio. */
+  confirmationMessage?: string;
 }) {
   const ctx: EngineContext = useMemo(() => {
     const byProduct = new Map<string, Ingredient[]>();
@@ -69,7 +66,9 @@ export function ChatWidget({
       content: `¡Hola! Soy tu mesero digital en ${restaurantName}. Dime qué te sirvo, o escribe "menú" para ver la carta.`,
     },
   ]);
-  const [draft, setDraft] = useState<OrderDraft>(emptyDraft);
+  // La comanda vive en el carrito compartido: lo que se pida aquí aparece en
+  // el menú manual y al revés.
+  const { draft, setDraft, clear } = useCart();
   const [input, setInput] = useState("");
   const [ordering, setOrdering] = useState(false);
   const [ordered, setOrdered] = useState(false);
@@ -145,7 +144,7 @@ export function ChatWidget({
    */
   function askOpenQuestionSafely(question: string, history: { role: "user" | "assistant"; content: string }[]) {
     setConsulting(true);
-    askOpenQuestion(qrToken, question, history)
+    askOpenQuestion(scope, question, history)
       .then((answer) => {
         setMessages((prev) => [
           ...prev,
@@ -160,21 +159,12 @@ export function ChatWidget({
     setOrdering(true);
     setError(null);
     try {
-      const lines: CartLine[] = draft.lines.map((line: DraftLine) => ({
-        key: line.key,
-        product: line.product,
-        quantity: line.quantity,
-        removedIngredients: line.removedIngredients,
-        notes: line.notes,
-        seat: line.seat,
-        course: line.course,
-      }));
-      await onOrder(lines, draft.diners ?? undefined);
+      await onOrder();
       setOrdered(true);
-      setDraft(emptyDraft());
+      clear();
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "¡Listo! Tu pedido ya está en cocina. ¿Te sirvo algo más?" },
+        { role: "assistant", content: confirmationMessage },
       ]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo registrar el pedido.");

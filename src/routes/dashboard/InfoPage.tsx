@@ -6,6 +6,7 @@ export function InfoPage() {
   const { restaurant, refreshRestaurant } = useAuth();
   const [description, setDescription] = useState(restaurant?.description ?? "");
   const [phone, setPhone] = useState(restaurant?.phone ?? "");
+  const [courierPhone, setCourierPhone] = useState(restaurant?.courier_phone ?? "");
   const [address, setAddress] = useState(restaurant?.address ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -18,7 +19,7 @@ export function InfoPage() {
     setSaved(false);
     await supabase
       .from("restaurants")
-      .update({ description, phone, address })
+      .update({ description, phone, address, courier_phone: courierPhone || null })
       .eq("id", restaurant!.id);
     await refreshRestaurant();
     setSaving(false);
@@ -54,6 +55,19 @@ export function InfoPage() {
             value={address}
             onChange={(e) => setAddress(e.target.value)}
           />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">WhatsApp del repartidor</label>
+          <input
+            className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm"
+            value={courierPhone}
+            onChange={(e) => setCourierPhone(e.target.value)}
+            placeholder="Ej. 6241234567"
+          />
+          <p className="mt-1 text-xs text-neutral-500">
+            A quién se le manda el pedido a domicilio con un toque. Si lo dejas vacío,
+            WhatsApp te dejará elegir el contacto en el momento.
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <button

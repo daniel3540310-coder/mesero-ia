@@ -1,46 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { CartProvider, useCart } from "../../contexts/CartContext";
 import { supabase } from "../../lib/supabaseClient";
-import type {
-  AiKnowledge,
-  Category,
-  Ingredient,
-  Policy,
-  Product,
-  Restaurant,
-  RestaurantTable,
-} from "../../types/database";
-import { ProductCard, type CartAddition } from "../../components/client/ProductCard";
-import { CartDrawer, type CartLine } from "../../components/client/CartDrawer";
-import { ChatWidget } from "../../components/client/ChatWidget";
-import { inferCourse } from "../../lib/courses";
+import { submitOrder } from "../../lib/orders";
+import { useRestaurantMenu } from "../../lib/useRestaurantMenu";
+import { OrderScreen } from "../../components/client/OrderScreen";
+import type { Restaurant, RestaurantTable } from "../../types/database";
 
-/** Comensal más alto de la comanda: sirve para deducir cuántos son en la mesa. */
-function maxSeat(lines: CartLine[]): number | null {
-  const seats = lines.map((l) => l.seat).filter((s): s is number => typeof s === "number");
-  return seats.length > 0 ? Math.max(...seats) : null;
-}
-
-type Tab = "menu" | "chat";
-
+/** Flujo de mesa: el comensal llega escaneando el QR de su mesa. */
 export function ClientMenuPage() {
   const { qrToken } = useParams<{ qrToken: string }>();
-  const [loading, setLoading] = useState(true);
-  const [notFound, setNotFound] = useState(false);
-  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [table, setTable] = useState<RestaurantTable | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
-  // Reglas del restaurante: el motor las usa para responder y para validar
-  // qué se puede modificar de cada platillo.
-  const [policies, setPolicies] = useState<Policy[]>([]);
-  const [knowledge, setKnowledge] = useState<AiKnowledge[]>([]);
-  const [tab, setTab] = useState<Tab>("menu");
-  const [cart, setCart] = useState<CartLine[]>([]);
-  const [cartOpen, setCartOpen] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
+  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [loadingTable, setLoadingTable] = useState(true);
 
   useEffect(() => {
     async function load() {
@@ -53,7 +26,7 @@ export function ClientMenuPage() {
 
       if (!tableData) {
         setNotFound(true);
-        setLoading(false);
+        setLoadingTable(false);
         return;
       }
       setTable(tableData as RestaurantTable);
@@ -65,141 +38,16 @@ export function ClientMenuPage() {
         .eq("status", "active")
         .maybeSingle();
 
-      if (!restaurantData) {
-        setNotFound(true);
-        setLoading(false);
-        return;
-      }
-      setRestaurant(restaurantData as Restaurant);
-
-      const [{ data: cats }, { data: prods }, { data: pols }, { data: know }] = await Promise.all([
-        supabase
-          .from("categories")
-          .select("*")
-          .eq("restaurant_id", (restaurantData as Restaurant).id)
-          .order("sort_order"),
-        supabase
-          .from("products")
-          .select("*")
-          .eq("restaurant_id", (restaurantData as Restaurant).id)
-          .eq("is_available", true),
-        supabase
-          .from("policies")
-          .select("*")
-          .eq("restaurant_id", (restaurantData as Restaurant).id)
-          .order("sort_order"),
-        supabase
-          .from("ai_knowledge")
-          .select("*")
-          .eq("restaurant_id", (restaurantData as Restaurant).id),
-      ]);
-      setPolicies((pols as Policy[]) ?? []);
-      setKnowledge((know as AiKnowledge[]) ?? []);
-      setCategories((cats as Category[]) ?? []);
-      const productList = (prods as Product[]) ?? [];
-      setProducts(productList);
-
-      if (productList.length > 0) {
-        const { data: ings } = await supabase
-          .from("ingredients")
-          .select("*")
-          .in("product_id", productList.map((p) => p.id));
-        setIngredients((ings as Ingredient[]) ?? []);
-      }
-
-      setLoading(false);
+      if (!restaurantData) setNotFound(true);
+      else setRestaurant(restaurantData as Restaurant);
+      setLoadingTable(false);
     }
     load();
   }, [qrToken]);
 
-  const ingredientsByProduct = useMemo(() => {
-    const map = new Map<string, Ingredient[]>();
-    for (const ing of ingredients) {
-      const list = map.get(ing.product_id) ?? [];
-      list.push(ing);
-      map.set(ing.product_id, list);
-    }
-    return map;
-  }, [ingredients]);
+  const menu = useRestaurantMenu(restaurant?.id ?? null);
 
-  function handleAdd(addition: CartAddition) {
-    // El tiempo sale de la categoría en la que el restaurante puso el platillo.
-    const category = categories.find((c) => c.id === addition.product.category_id);
-    setCart((prev) => [
-      ...prev,
-      {
-        ...addition,
-        key: `${addition.product.id}-${Date.now()}`,
-        course: inferCourse(category?.name ?? ""),
-      },
-    ]);
-    setCartOpen(true);
-  }
-
-  function handleRemove(key: string) {
-    setCart((prev) => prev.filter((l) => l.key !== key));
-  }
-
-  async function submitOrder(lines: CartLine[], diners?: number) {
-    if (!restaurant || !table || lines.length === 0) return;
-
-    // El cliente que ordena es anónimo y las políticas RLS de "orders" solo
-    // dejan LEER pedidos al restaurante dueño (correcto: un cliente no debe
-    // poder ver pedidos de otras mesas). Pedir la fila de vuelta con
-    // .select() después del insert (como se hacía antes) choca con eso:
-    // PostgREST no puede devolver una fila que el cliente no puede leer, así
-    // que cancela el insert entero — el pedido nunca llegaba a guardarse.
-    // Por eso el id se genera aquí mismo y nunca se le pide la fila de
-    // vuelta a Supabase.
-    const orderId = crypto.randomUUID();
-    const { error: orderError } = await supabase
-      .from("orders")
-      .insert({
-        id: orderId,
-        restaurant_id: restaurant.id,
-        table_id: table.id,
-        status: "pendiente",
-        // Si nadie dijo cuántos son, se deduce del comensal más alto que
-        // aparezca en la comanda; null si todo era para compartir.
-        diners: diners ?? maxSeat(lines),
-      });
-    if (orderError) throw orderError;
-
-    const { error: itemsError } = await supabase.from("order_items").insert(
-      lines.map((line) => ({
-        order_id: orderId,
-        product_id: line.product.id,
-        quantity: line.quantity,
-        removed_ingredients: line.removedIngredients,
-        notes: line.notes || null,
-        seat_number: line.seat,
-        course: line.course,
-      }))
-    );
-    if (itemsError) throw itemsError;
-  }
-
-  async function handleConfirmOrder() {
-    if (cart.length === 0) return;
-    setConfirming(true);
-    try {
-      await submitOrder(cart);
-      setCart([]);
-      setCartOpen(false);
-      setConfirmed(true);
-    } finally {
-      setConfirming(false);
-    }
-  }
-
-  async function handleOrderFromChat(lines: CartLine[], diners?: number) {
-    // A diferencia del carrito, un pedido hecho por chat NO saca al cliente
-    // a la pantalla completa de confirmación — se queda conversando; el
-    // ChatWidget muestra su propia palomita en el mensaje.
-    await submitOrder(lines, diners);
-  }
-
-  if (loading) {
+  if (loadingTable || menu.loading) {
     return <div className="p-8 text-center text-neutral-500">Cargando menú…</div>;
   }
 
@@ -211,112 +59,57 @@ export function ClientMenuPage() {
     );
   }
 
-  if (confirmed) {
-    return (
-      <div className="flex min-h-screen items-center justify-center px-4 text-center">
-        <div>
-          <h1 className="mb-2 text-2xl font-semibold">¡Pedido enviado!</h1>
-          <p className="mb-6 text-neutral-500">
-            Tu pedido llegó a {restaurant.name}. Un mesero lo confirmará en breve.
-          </p>
-          <button
-            onClick={() => setConfirmed(false)}
-            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white"
-          >
-            Volver al menú
-          </button>
-        </div>
-      </div>
-    );
+  return (
+    <CartProvider scope={`mesa:${table.id}`} products={menu.products}>
+      <TableOrder restaurant={restaurant} table={table} menu={menu} qrToken={qrToken!} />
+    </CartProvider>
+  );
+}
+
+function TableOrder({
+  restaurant,
+  table,
+  menu,
+  qrToken,
+}: {
+  restaurant: Restaurant;
+  table: RestaurantTable;
+  menu: ReturnType<typeof useRestaurantMenu>;
+  qrToken: string;
+}) {
+  const { draft, clear } = useCart();
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit() {
+    if (draft.lines.length === 0 || submitting) return;
+    setSubmitting(true);
+    try {
+      await submitOrder({
+        restaurantId: restaurant.id,
+        tableId: table.id,
+        lines: draft.lines,
+        diners: draft.diners,
+      });
+      clear();
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50 pb-24">
-      <header className="border-b border-neutral-200 bg-white px-4 py-4">
-        <h1 className="text-lg font-semibold">{restaurant.name}</h1>
-        <p className="text-sm text-neutral-500">{table.label}</p>
-        <div className="mt-3 flex gap-2">
-          <button
-            onClick={() => setTab("menu")}
-            className={`rounded-full px-3 py-1 text-sm font-medium ${
-              tab === "menu" ? "bg-brand-600 text-white" : "bg-neutral-100 text-neutral-600"
-            }`}
-          >
-            Menú
-          </button>
-          <button
-            onClick={() => setTab("chat")}
-            className={`rounded-full px-3 py-1 text-sm font-medium ${
-              tab === "chat" ? "bg-brand-600 text-white" : "bg-neutral-100 text-neutral-600"
-            }`}
-          >
-            Hablar con la IA
-          </button>
-        </div>
-      </header>
-
-      {tab === "menu" ? (
-        <div className="mx-auto max-w-3xl space-y-6 p-4">
-          {categories.map((cat) => {
-            const catProducts = products.filter((p) => p.category_id === cat.id);
-            if (catProducts.length === 0) return null;
-            return (
-              <div key={cat.id}>
-                <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-                  {cat.name}
-                </h2>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {catProducts.map((p) => (
-                    <ProductCard
-                      key={p.id}
-                      product={p}
-                      ingredients={ingredientsByProduct.get(p.id) ?? []}
-                      onAdd={handleAdd}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          {products.length === 0 && (
-            <p className="text-center text-neutral-500">
-              Este restaurante aún no ha publicado su menú.
-            </p>
-          )}
-        </div>
-      ) : (
-        <div className="mx-auto h-[70vh] max-w-2xl">
-          <ChatWidget
-            qrToken={qrToken!}
-            restaurantName={restaurant.name}
-            tableLabel={table.label}
-            categories={categories}
-            products={products}
-            ingredients={ingredients}
-            policies={policies}
-            knowledge={knowledge}
-            onOrder={handleOrderFromChat}
-          />
-        </div>
-      )}
-
-      {cart.length > 0 && !cartOpen && (
-        <button
-          onClick={() => setCartOpen(true)}
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-brand-600 px-6 py-3 text-sm font-medium text-white shadow-lg"
-        >
-          Ver pedido ({cart.length})
-        </button>
-      )}
-
-      <CartDrawer
-        open={cartOpen}
-        lines={cart}
-        onClose={() => setCartOpen(false)}
-        onRemove={handleRemove}
-        onConfirm={handleConfirmOrder}
-        confirming={confirming}
-      />
-    </div>
+    <OrderScreen
+      restaurantName={restaurant.name}
+      contextLabel={table.label}
+      scope={{ qrToken }}
+      categories={menu.categories}
+      products={menu.products}
+      ingredients={menu.ingredients}
+      policies={menu.policies}
+      knowledge={menu.knowledge}
+      confirmLabel="Ordenar"
+      confirmationMessage="¡Listo! Tu pedido ya está en cocina. ¿Te sirvo algo más?"
+      submitting={submitting}
+      onSubmit={handleSubmit}
+    />
   );
 }

@@ -11,6 +11,7 @@ import { AiInfoPage } from "./routes/dashboard/AiInfoPage";
 import { TablesPage } from "./routes/dashboard/TablesPage";
 import { OrdersPage } from "./routes/dashboard/OrdersPage";
 import { ClientMenuPage } from "./routes/client/ClientMenuPage";
+import { DeliveryPage } from "./routes/client/DeliveryPage";
 
 export default function App() {
   return (
@@ -46,6 +47,7 @@ export default function App() {
           </Route>
 
           <Route path="/menu/:qrToken" element={<ClientMenuPage />} />
+          <Route path="/delivery/:slug" element={<DeliveryPage />} />
 
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="*" element={<Navigate to="/login" replace />} />

@@ -4,6 +4,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useKitchenAlert } from "../../hooks/useKitchenAlert";
 import { useSpeechRecognition } from "../../hooks/useSpeechRecognition";
 import { hasWakeWord, parseKitchenCommand } from "../../lib/voiceCommands";
+import { buildCourierMessage, navigationUrl, normalizePhone, whatsappUrl } from "../../lib/courierDispatch";
 import type {
   Category,
   Order,
@@ -424,6 +425,11 @@ export function OrdersPage() {
 
   if (!restaurant) return null;
 
+  // Capturados tras la guarda: TypeScript no arrastra el estrechamiento de
+  // `restaurant` dentro de renderOrder, que es una función anidada.
+  const restaurantName = restaurant.name;
+  const courierPhone = restaurant.courier_phone;
+
   function renderOrder(order: OrderView) {
     const number = orderNumbers.get(order.id);
     const mine = visibleItems(order, station);
@@ -516,6 +522,45 @@ export function OrdersPage() {
             )
           )}
         </div>
+
+        {order.order_type === "delivery" && (
+          <div className="mb-3 space-y-1 rounded-lg border border-neutral-200 bg-neutral-50 p-2 text-xs">
+            {order.customer_address && (
+              <p className="text-neutral-600">{order.customer_address}</p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={whatsappUrl(
+                  buildCourierMessage(order, order.items, restaurantName),
+                  courierPhone
+                )}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-lg bg-green-600 px-3 py-1.5 font-medium text-white hover:bg-green-700"
+              >
+                Compartir con repartidor
+              </a>
+              {normalizePhone(order.customer_phone) && (
+                <a
+                  href={`tel:${normalizePhone(order.customer_phone)}`}
+                  className="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium hover:bg-neutral-100"
+                >
+                  Llamar
+                </a>
+              )}
+              {navigationUrl(order) && (
+                <a
+                  href={navigationUrl(order)!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium hover:bg-neutral-100"
+                >
+                  Ver ruta
+                </a>
+              )}
+            </div>
+          </div>
+        )}
 
         {isPending && (
           <div className="flex gap-2">

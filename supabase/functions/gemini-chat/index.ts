@@ -42,14 +42,17 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { qrToken, question, history } = (await req.json()) as {
-      qrToken: string;
+    // El comensal puede llegar por el QR de una mesa o por el enlace de
+    // domicilio, donde no hay mesa: se acepta cualquiera de los dos.
+    const { qrToken, slug, question, history } = (await req.json()) as {
+      qrToken?: string;
+      slug?: string;
       question: string;
       history?: ChatMessage[];
     };
 
-    if (!qrToken || !question) {
-      return jsonResponse({ error: "Falta qrToken o question." }, 400);
+    if ((!qrToken && !slug) || !question) {
+      return jsonResponse({ error: "Falta qrToken o slug, y question." }, 400);
     }
 
     const supabase = createClient(
@@ -57,19 +60,22 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const { data: table } = await supabase
-      .from("tables")
-      .select("*")
-      .eq("qr_token", qrToken)
-      .maybeSingle();
-    if (!table) return jsonResponse({ error: "Mesa no encontrada." }, 404);
+    let restaurantId: string | null = null;
+    if (qrToken) {
+      const { data: table } = await supabase
+        .from("tables")
+        .select("restaurant_id")
+        .eq("qr_token", qrToken)
+        .maybeSingle();
+      if (!table) return jsonResponse({ error: "Mesa no encontrada." }, 404);
+      restaurantId = table.restaurant_id;
+    }
 
-    const { data: restaurant } = await supabase
-      .from("restaurants")
-      .select("*")
-      .eq("id", table.restaurant_id)
-      .eq("status", "active")
-      .maybeSingle();
+    const query = supabase.from("restaurants").select("*").eq("status", "active");
+    const { data: restaurant } = await (restaurantId
+      ? query.eq("id", restaurantId)
+      : query.ilike("slug", slug!)
+    ).maybeSingle();
     if (!restaurant) return jsonResponse({ error: "Restaurante no disponible." }, 404);
 
     const [{ data: categories }, { data: products }, { data: policies }, { data: knowledge }] =
