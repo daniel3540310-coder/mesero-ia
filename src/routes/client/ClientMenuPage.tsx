@@ -5,6 +5,8 @@ import { supabase } from "../../lib/supabaseClient";
 import { submitOrder } from "../../lib/orders";
 import { useRestaurantMenu } from "../../lib/useRestaurantMenu";
 import { OrderScreen } from "../../components/client/OrderScreen";
+import { AccountPanel, TableClosedScreen } from "../../components/client/AccountPanel";
+import { useTableAccount } from "../../lib/useTableAccount";
 import type { Restaurant, RestaurantTable } from "../../types/database";
 
 /** Flujo de mesa: el comensal llega escaneando el QR de su mesa. */
@@ -79,6 +81,7 @@ function TableOrder({
 }) {
   const { draft, clear } = useCart();
   const [submitting, setSubmitting] = useState(false);
+  const account = useTableAccount(table.id, menu.products);
 
   async function handleSubmit() {
     if (draft.lines.length === 0 || submitting) return;
@@ -96,6 +99,20 @@ function TableOrder({
     }
   }
 
+  // El restaurante cobró: la mesa queda libre para el siguiente cliente.
+  if (account.closed) {
+    return (
+      <TableClosedScreen
+        restaurantName={restaurant.name}
+        reviewUrl={restaurant.google_review_url}
+        onRestart={() => {
+          clear();
+          account.reset();
+        }}
+      />
+    );
+  }
+
   return (
     <OrderScreen
       restaurantName={restaurant.name}
@@ -110,6 +127,7 @@ function TableOrder({
       confirmationMessage="¡Listo! Tu pedido ya está en cocina. ¿Te sirvo algo más?"
       submitting={submitting}
       onSubmit={handleSubmit}
+      account={<AccountPanel account={account} />}
     />
   );
 }

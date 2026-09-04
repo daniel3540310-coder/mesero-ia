@@ -5,6 +5,7 @@ import { useKitchenAlert } from "../../hooks/useKitchenAlert";
 import { useSpeechRecognition } from "../../hooks/useSpeechRecognition";
 import { hasWakeWord, parseKitchenCommand } from "../../lib/voiceCommands";
 import { buildCourierMessage, navigationUrl, normalizePhone, whatsappUrl } from "../../lib/courierDispatch";
+import { PAYMENT_LABELS } from "../../types/database";
 import type {
   Category,
   Order,
@@ -236,6 +237,12 @@ export function OrdersPage() {
     [orders, now, station]
   );
 
+  // Mesas esperando cobro. Es lo primero que debe ver la caja al entrar.
+  const billRequests = useMemo(
+    () => orders.filter((o) => o.bill_status === "solicitada"),
+    [orders]
+  );
+
   const finished = useMemo(
     () =>
       orders.filter((o) => {
@@ -285,6 +292,24 @@ export function OrdersPage() {
         .from("order_items")
         .update({ status })
         .in("id", targets.map((i) => i.id));
+      await load();
+    } finally {
+      setUpdatingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(orderId);
+        return next;
+      });
+    }
+  }
+
+  /** Cobra y cierra: la pantalla del comensal cambia sola a la despedida. */
+  async function closeBill(orderId: string) {
+    setUpdatingIds((prev) => new Set(prev).add(orderId));
+    try {
+      await supabase
+        .from("orders")
+        .update({ bill_status: "pagada", closed_at: new Date().toISOString() })
+        .eq("id", orderId);
       await load();
     } finally {
       setUpdatingIds((prev) => {
@@ -659,6 +684,29 @@ export function OrdersPage() {
               Deshacer
             </button>
           )}
+        </div>
+      )}
+
+      {billRequests.length > 0 && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3">
+          <p className="text-sm font-semibold text-amber-900">
+            💵 {billRequests.length === 1 ? "Una mesa pidió" : `${billRequests.length} mesas pidieron`} la cuenta
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {billRequests.map((order) => (
+              <button
+                key={order.id}
+                onClick={() => closeBill(order.id)}
+                disabled={updatingIds.has(order.id)}
+                className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60"
+              >
+                {order.table_label ?? order.table?.label ?? "Mesa"}
+                {order.payment_method ? ` · ${PAYMENT_LABELS[order.payment_method]}` : ""}
+                {" · "}
+                {updatingIds.has(order.id) ? "Cerrando…" : "Cobrar y cerrar"}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

@@ -13,7 +13,7 @@ import { CartDrawer } from "./CartDrawer";
 import { ChatWidget } from "./ChatWidget";
 import { ProductCard, type CartAddition } from "./ProductCard";
 
-type Tab = "menu" | "chat";
+type Tab = "menu" | "chat" | "cuenta";
 
 /**
  * La pantalla del cliente: carta, mesero IA y carrito.
@@ -35,6 +35,7 @@ export function OrderScreen({
   submitting,
   onSubmit,
   header,
+  account,
 }: {
   restaurantName: string;
   /** Qué se está atendiendo: "Mesa 4" o "A domicilio". */
@@ -51,6 +52,8 @@ export function OrderScreen({
   onSubmit: () => Promise<void>;
   /** Contenido extra bajo la cabecera (el checkout de domicilio). */
   header?: ReactNode;
+  /** Vista de cuenta; solo existe en mesa (a domicilio se paga al recibir). */
+  account?: ReactNode;
 }) {
   const [tab, setTab] = useState<Tab>("menu");
   const [cartOpen, setCartOpen] = useState(false);
@@ -107,11 +110,23 @@ export function OrderScreen({
           >
             Hablar con el mesero
           </button>
+          {account && (
+            <button
+              onClick={() => setTab("cuenta")}
+              className={`rounded-full px-3 py-1 text-sm font-medium ${
+                tab === "cuenta" ? "bg-brand-600 text-white" : "bg-neutral-100 text-neutral-600"
+              }`}
+            >
+              Mi cuenta
+            </button>
+          )}
         </div>
         {header}
       </header>
 
-      {tab === "menu" ? (
+      {tab === "cuenta" ? (
+        account
+      ) : tab === "menu" ? (
         <div className="mx-auto max-w-3xl space-y-6 p-4">
           {categories.map((cat) => {
             const catProducts = products.filter((p) => p.category_id === cat.id);

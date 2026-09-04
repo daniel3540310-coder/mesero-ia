@@ -7,6 +7,7 @@ export function InfoPage() {
   const [description, setDescription] = useState(restaurant?.description ?? "");
   const [phone, setPhone] = useState(restaurant?.phone ?? "");
   const [courierPhone, setCourierPhone] = useState(restaurant?.courier_phone ?? "");
+  const [reviewUrl, setReviewUrl] = useState(restaurant?.google_review_url ?? "");
   const [address, setAddress] = useState(restaurant?.address ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -19,7 +20,13 @@ export function InfoPage() {
     setSaved(false);
     await supabase
       .from("restaurants")
-      .update({ description, phone, address, courier_phone: courierPhone || null })
+      .update({
+        description,
+        phone,
+        address,
+        courier_phone: courierPhone || null,
+        google_review_url: reviewUrl || null,
+      })
       .eq("id", restaurant!.id);
     await refreshRestaurant();
     setSaving(false);
@@ -55,6 +62,19 @@ export function InfoPage() {
             value={address}
             onChange={(e) => setAddress(e.target.value)}
           />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">Enlace de reseñas de Google</label>
+          <input
+            className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm"
+            value={reviewUrl}
+            onChange={(e) => setReviewUrl(e.target.value)}
+            placeholder="https://g.page/r/..."
+          />
+          <p className="mt-1 text-xs text-neutral-500">
+            Se le muestra al cliente al cerrar su mesa. Búscalo en tu perfil de Google
+            Business, en “Pedir reseñas”.
+          </p>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium">WhatsApp del repartidor</label>

@@ -12,6 +12,8 @@ export interface Restaurant {
   status: RestaurantStatus;
   /** WhatsApp del repartidor. Vacío = el despacho abre el selector de contactos. */
   courier_phone: string | null;
+  /** Perfil de Google Maps al que se invita a reseñar tras pagar. */
+  google_review_url: string | null;
   created_at: string;
 }
 
@@ -102,12 +104,27 @@ export const COURSE_LABELS: Record<Course, string> = {
 
 export type OrderType = "mesa" | "delivery";
 
+/**
+ * Estado de cobro, independiente del de preparación: un pedido puede estar
+ * entregado y sin pagar, o con la cuenta pedida y platillos aún en la plancha.
+ */
+export type BillStatus = "abierta" | "solicitada" | "pagada";
+
+export type PaymentMethod = "efectivo" | "tarjeta";
+
+export const PAYMENT_LABELS: Record<PaymentMethod, string> = {
+  efectivo: "Efectivo",
+  tarjeta: "Tarjeta",
+};
+
 export interface Order {
   id: string;
   restaurant_id: string;
   order_type: OrderType;
-  /** null en pedidos a domicilio. */
+  /** null en pedidos a domicilio, o si la mesa se eliminó después. */
   table_id: string | null;
+  /** Copia del nombre de la mesa, para que el historial sobreviva a su borrado. */
+  table_label: string | null;
   status: OrderStatus;
   /** Cuántos comensales hay en la mesa; null si no se indicó. */
   diners: number | null;
@@ -117,6 +134,9 @@ export interface Order {
   customer_address: string | null;
   customer_lat: number | null;
   customer_lng: number | null;
+  bill_status: BillStatus;
+  payment_method: PaymentMethod | null;
+  closed_at: string | null;
   created_at: string;
 }
 
