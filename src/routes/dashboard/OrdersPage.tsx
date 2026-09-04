@@ -5,18 +5,25 @@ import { useKitchenAlert } from "../../hooks/useKitchenAlert";
 import { useSpeechRecognition } from "../../hooks/useSpeechRecognition";
 import { hasWakeWord, parseKitchenCommand } from "../../lib/voiceCommands";
 import type {
+  Category,
   Order,
   OrderItem,
   OrderStatus,
   Product,
   RestaurantTable,
+  Station,
 } from "../../types/database";
-import { COURSE_LABELS, COURSE_ORDER } from "../../types/database";
+import { COURSE_LABELS, COURSE_ORDER, STATION_LABELS } from "../../types/database";
+
+type ViewItem = OrderItem & { product: Product | null; station: Station };
 
 interface OrderView extends Order {
   table: RestaurantTable | null;
-  items: (OrderItem & { product: Product | null })[];
+  items: ViewItem[];
 }
+
+/** Vista activa del KDS. "all" sirve para restaurantes de una sola persona. */
+type StationFilter = Station | "all";
 
 const STATUS_LABELS: Record<OrderStatus, string> = {
   pendiente: "Pendiente",
@@ -30,19 +37,34 @@ const STATUS_COLORS: Record<OrderStatus, string> = {
   cancelado: "bg-neutral-200 text-neutral-600",
 };
 
+const STATION_TABS: [StationFilter, string][] = [
+  ["all", "Todo"],
+  ["kitchen", STATION_LABELS.kitchen],
+  ["bar", STATION_LABELS.bar],
+];
+
+/** Los platillos que le tocan a la vista activa. */
+function visibleItems(order: OrderView, station: StationFilter): ViewItem[] {
+  return station === "all" ? order.items : order.items.filter((i) => i.station === station);
+}
+
 /** Minutos que se asumen cuando un producto no tiene tiempo de preparación configurado. */
 const DEFAULT_PREP_MINUTES = 10;
 
-/** Una comanda está lista cuando termina su platillo más lento, no el más rápido. */
-function orderPrepMinutes(order: OrderView): number {
-  const times = order.items.map((i) => i.product?.prep_time_minutes ?? DEFAULT_PREP_MINUTES);
+/**
+ * Una comanda está lista cuando termina su platillo más lento, no el más
+ * rápido. Se mide solo sobre los platillos de la estación que mira: un coctel
+ * no debe aparecer atrasado porque la carne aún está en la plancha.
+ */
+function orderPrepMinutes(items: ViewItem[]): number {
+  const times = items.map((i) => i.product?.prep_time_minutes ?? DEFAULT_PREP_MINUTES);
   return times.length > 0 ? Math.max(...times) : DEFAULT_PREP_MINUTES;
 }
 
 /** Minutos que faltan para que la comanda deba salir. Negativo = va tarde. */
-function minutesLeft(order: OrderView, now: number): number {
+function minutesLeft(order: OrderView, items: ViewItem[], now: number): number {
   const elapsed = (now - new Date(order.created_at).getTime()) / 60000;
-  return orderPrepMinutes(order) - elapsed;
+  return orderPrepMinutes(items) - elapsed;
 }
 
 function countdownStyle(left: number): { text: string; late: boolean; className: string } {
@@ -77,6 +99,8 @@ export function OrdersPage() {
   // inmediato para que se vea que el comando de voz fue recibido, sin esperar
   // a que responda la base de datos.
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(new Set());
+  // Vista activa: la barra no debería ver hamburguesas ni la cocina cocteles.
+  const [station, setStation] = useState<StationFilter>("all");
 
   const {
     supported: soundSupported,
@@ -95,24 +119,37 @@ export function OrdersPage() {
       .order("created_at", { ascending: false });
 
     const ordersList = (rawOrders as Order[]) ?? [];
-    const [{ data: tables }, { data: items }, { data: products }] = await Promise.all([
-      supabase.from("tables").select("*").eq("restaurant_id", restaurant.id),
-      supabase
-        .from("order_items")
-        .select("*")
-        .in("order_id", ordersList.map((o) => o.id).length ? ordersList.map((o) => o.id) : [""]),
-      supabase.from("products").select("*").eq("restaurant_id", restaurant.id),
-    ]);
+    const [{ data: tables }, { data: items }, { data: products }, { data: categories }] =
+      await Promise.all([
+        supabase.from("tables").select("*").eq("restaurant_id", restaurant.id),
+        supabase
+          .from("order_items")
+          .select("*")
+          .in("order_id", ordersList.map((o) => o.id).length ? ordersList.map((o) => o.id) : [""]),
+        supabase.from("products").select("*").eq("restaurant_id", restaurant.id),
+        supabase.from("categories").select("*").eq("restaurant_id", restaurant.id),
+      ]);
 
     const tablesById = new Map((tables as RestaurantTable[] | null)?.map((t) => [t.id, t]));
     const productsById = new Map((products as Product[] | null)?.map((p) => [p.id, p]));
+    const categoryStation = new Map(
+      (categories as Category[] | null)?.map((c) => [c.id, c.station])
+    );
+
+    // El producto puede sobrescribir la estación de su categoría (el postre que
+    // prepara la barra); si no, hereda.
+    const stationOf = (product: Product | null): Station =>
+      product?.station ?? (product ? categoryStation.get(product.category_id) ?? "kitchen" : "kitchen");
 
     const view: OrderView[] = ordersList.map((order) => ({
       ...order,
-      table: tablesById.get(order.table_id) ?? null,
+      table: order.table_id ? tablesById.get(order.table_id) ?? null : null,
       items: ((items as OrderItem[] | null) ?? [])
         .filter((i) => i.order_id === order.id)
-        .map((i) => ({ ...i, product: productsById.get(i.product_id) ?? null })),
+        .map((i) => {
+          const product = productsById.get(i.product_id) ?? null;
+          return { ...i, product, station: stationOf(product) };
+        }),
     }));
 
     setOrders(view);
@@ -131,8 +168,18 @@ export function OrdersPage() {
       )
       .subscribe();
 
+    // También hay que escuchar los platillos: cuando la barra entrega lo suyo
+    // y el pedido sigue pendiente, "orders" no cambia y sin esto la pantalla
+    // de otro dispositivo no se enteraría. RLS ya limita lo que llega a los
+    // pedidos de este restaurante.
+    const itemsChannel = supabase
+      .channel(`order-items-${restaurant.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, () => load())
+      .subscribe();
+
     return () => {
       supabase.removeChannel(channel);
+      supabase.removeChannel(itemsChannel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restaurant?.id]);
@@ -174,16 +221,28 @@ export function OrdersPage() {
     return map;
   }, [orders]);
 
-  // Prioridad dinámica: arriba lo que debe salir antes y lo que ya va tarde.
+  // Un pedido está "pendiente" para esta estación si le queda algo suyo por
+  // salir, aunque la otra estación ya haya entregado lo que le tocaba.
   const pending = useMemo(
     () =>
       orders
-        .filter((o) => o.status === "pendiente")
-        .sort((a, b) => minutesLeft(a, now) - minutesLeft(b, now)),
-    [orders, now]
+        .filter((o) => visibleItems(o, station).some((i) => i.status === "pendiente"))
+        .sort(
+          (a, b) =>
+            minutesLeft(a, visibleItems(a, station), now) -
+            minutesLeft(b, visibleItems(b, station), now)
+        ),
+    [orders, now, station]
   );
 
-  const finished = useMemo(() => orders.filter((o) => o.status !== "pendiente"), [orders]);
+  const finished = useMemo(
+    () =>
+      orders.filter((o) => {
+        const mine = visibleItems(o, station);
+        return mine.length > 0 && mine.every((i) => i.status !== "pendiente");
+      }),
+    [orders, station]
+  );
 
   /**
    * Última acción revertible. Se guarda también cuando se usan los botones, no
@@ -192,24 +251,39 @@ export function OrdersPage() {
    */
   const lastActionRef = useRef<{
     orderId: string;
-    previousStatus: OrderStatus;
+    /** Estado anterior de cada platillo tocado, para poder revertir exactamente. */
+    items: { id: string; status: OrderStatus }[];
     number?: number;
   } | null>(null);
 
-  async function updateStatus(orderId: string, status: OrderStatus, record = true) {
+  /**
+   * Cambia el estado de los platillos que le tocan a la estación activa.
+   *
+   * Nunca toca "orders" directamente: un trigger en la base recalcula el estado
+   * del pedido a partir de sus platillos, así que el pedido solo se cierra
+   * cuando barra Y cocina terminaron lo suyo.
+   */
+  async function setItemsStatus(orderId: string, status: OrderStatus, record = true) {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return;
+
+    const targets = visibleItems(order, station).filter((i) => i.status !== status);
+    if (targets.length === 0) return;
+
     if (record) {
-      const current = orders.find((o) => o.id === orderId);
-      if (current) {
-        lastActionRef.current = {
-          orderId,
-          previousStatus: current.status,
-          number: orderNumbers.get(orderId),
-        };
-      }
+      lastActionRef.current = {
+        orderId,
+        items: targets.map((i) => ({ id: i.id, status: i.status })),
+        number: orderNumbers.get(orderId),
+      };
     }
+
     setUpdatingIds((prev) => new Set(prev).add(orderId));
     try {
-      await supabase.from("orders").update({ status }).eq("id", orderId);
+      await supabase
+        .from("order_items")
+        .update({ status })
+        .in("id", targets.map((i) => i.id));
       await load();
     } finally {
       setUpdatingIds((prev) => {
@@ -220,6 +294,18 @@ export function OrdersPage() {
     }
   }
 
+  /** Devuelve cada platillo al estado exacto que tenía antes. */
+  async function restoreItems(items: { id: string; status: OrderStatus }[]) {
+    const byStatus = new Map<OrderStatus, string[]>();
+    for (const item of items) {
+      byStatus.set(item.status, [...(byStatus.get(item.status) ?? []), item.id]);
+    }
+    for (const [status, ids] of byStatus) {
+      await supabase.from("order_items").update({ status }).in("id", ids);
+    }
+    await load();
+  }
+
   /** "Mesero, deshacer 2": devuelve esa comanda concreta a preparación. */
   async function undoOrderNumber(orderNumber: number) {
     const target = orders.find((o) => orderNumbers.get(o.id) === orderNumber);
@@ -227,7 +313,8 @@ export function OrdersPage() {
       setVoiceFeedback({ message: `No encontré la comanda #${orderNumber}.` });
       return;
     }
-    if (target.status === "pendiente") {
+    const mine = visibleItems(target, station);
+    if (mine.every((i) => i.status === "pendiente")) {
       setVoiceFeedback({ message: `La comanda #${orderNumber} ya está en preparación.` });
       return;
     }
@@ -235,7 +322,7 @@ export function OrdersPage() {
     // acción deshacible", o un segundo "deshacer" la mandaría de vuelta.
     if (lastActionRef.current?.orderId === target.id) lastActionRef.current = null;
     setVoiceFeedback({ message: `Comanda #${orderNumber} regresó a preparación.` });
-    await updateStatus(target.id, "pendiente", false);
+    await setItemsStatus(target.id, "pendiente", false);
   }
 
   async function undoLastAction() {
@@ -247,14 +334,13 @@ export function OrdersPage() {
     // Se limpia antes de revertir para que un segundo "deshacer" no devuelva
     // la comanda al estado que el cocinero acaba de corregir.
     lastActionRef.current = null;
-    const label = STATUS_LABELS[last.previousStatus].toLowerCase();
     setVoiceFeedback({
       message:
         last.number !== undefined
-          ? `Comanda #${last.number} regresó a ${label}.`
-          : `Comanda regresada a ${label}.`,
+          ? `Comanda #${last.number} regresó como estaba.`
+          : "Comanda regresada como estaba.",
     });
-    await updateStatus(last.orderId, last.previousStatus, false);
+    await restoreItems(last.items);
   }
 
   // El modo continuo puede repetir la misma frase varias veces; sin este freno
@@ -299,7 +385,7 @@ export function OrdersPage() {
           : `Comanda #${command.orderNumber} cancelada.`,
       canUndo: true,
     });
-    updateStatus(target.id, command.action);
+    setItemsStatus(target.id, command.action);
   }
 
   const {
@@ -340,9 +426,12 @@ export function OrdersPage() {
 
   function renderOrder(order: OrderView) {
     const number = orderNumbers.get(order.id);
-    const isPending = order.status === "pendiente";
+    const mine = visibleItems(order, station);
+    // "Pendiente" es relativo a la estación: cocina puede tener trabajo aunque
+    // la barra ya haya entregado lo suyo.
+    const isPending = mine.some((i) => i.status === "pendiente");
     const updating = updatingIds.has(order.id);
-    const countdown = countdownStyle(minutesLeft(order, now));
+    const countdown = countdownStyle(minutesLeft(order, mine, now));
 
     return (
       <div
@@ -360,7 +449,9 @@ export function OrdersPage() {
             )}
             <div>
               <p className="font-medium">
-                {order.table?.label ?? "Mesa desconocida"}
+                {order.order_type === "delivery"
+                  ? `🛵 ${order.customer_name ?? "Domicilio"}`
+                  : order.table?.label ?? "Mesa desconocida"}
                 {order.diners ? (
                   <span className="ml-1 text-xs font-normal text-neutral-500">
                     · {order.diners} pers.
@@ -388,19 +479,25 @@ export function OrdersPage() {
         </div>
 
         <div className="mb-3 space-y-2">
-          {COURSE_ORDER.filter((course) => order.items.some((i) => i.course === course)).map(
+          {COURSE_ORDER.filter((course) => mine.some((i) => i.course === course)).map(
             (course) => (
               <div key={course}>
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
                   {COURSE_LABELS[course]}
                 </p>
                 <ul className="space-y-0.5 text-sm">
-                  {order.items
+                  {mine
                     .filter((i) => i.course === course)
                     // Por comensal, y lo de compartir al final.
                     .sort((a, b) => (a.seat_number ?? 99) - (b.seat_number ?? 99))
                     .map((item) => (
-                      <li key={item.id}>
+                      <li
+                        key={item.id}
+                        className={item.status !== "pendiente" ? "text-neutral-400 line-through" : ""}
+                      >
+                        {/* En la vista "Todo" hay que ver de un golpe qué
+                            estación ya entregó lo suyo. */}
+                        {item.status === "entregado" ? "✓ " : item.status === "cancelado" ? "✕ " : ""}
                         <span className="font-medium text-neutral-500">
                           {item.seat_number ? `C${item.seat_number}` : "Mesa"}
                         </span>{" "}
@@ -423,14 +520,14 @@ export function OrdersPage() {
         {isPending && (
           <div className="flex gap-2">
             <button
-              onClick={() => updateStatus(order.id, "entregado")}
+              onClick={() => setItemsStatus(order.id, "entregado")}
               disabled={updating}
               className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60"
             >
               {updating ? "Guardando…" : "Marcar entregado"}
             </button>
             <button
-              onClick={() => updateStatus(order.id, "cancelado")}
+              onClick={() => setItemsStatus(order.id, "cancelado")}
               disabled={updating}
               className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-100 disabled:opacity-60"
             >
@@ -445,7 +542,26 @@ export function OrdersPage() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold">Cocina</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-semibold">
+            {station === "all" ? "Comandas" : STATION_LABELS[station]}
+          </h2>
+          <div className="flex rounded-lg border border-neutral-300 p-0.5">
+            {STATION_TABS.map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => setStation(value)}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                  station === value
+                    ? "bg-neutral-900 text-white"
+                    : "text-neutral-600 hover:bg-neutral-100"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {soundSupported && !soundReady && (
             <button

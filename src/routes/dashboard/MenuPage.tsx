@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import { useAuth } from "../../contexts/AuthContext";
-import type { Category, Product } from "../../types/database";
+import type { Category, Product, Station } from "../../types/database";
+import { STATION_LABELS } from "../../types/database";
 import { ProductEditor } from "../../components/menu/ProductEditor";
 
 export function MenuPage() {
@@ -42,6 +43,11 @@ export function MenuPage() {
     await load();
   }
 
+  async function setCategoryStation(id: string, station: Station) {
+    await supabase.from("categories").update({ station }).eq("id", id);
+    await load();
+  }
+
   async function deleteCategory(id: string) {
     if (!confirm("¿Eliminar categoría y todos sus productos?")) return;
     await supabase.from("categories").delete().eq("id", id);
@@ -78,8 +84,22 @@ export function MenuPage() {
       <div className="space-y-6">
         {categories.map((cat) => (
           <div key={cat.id} className="rounded-xl border border-neutral-200 bg-white p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="font-medium">{cat.name}</h3>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <h3 className="font-medium">{cat.name}</h3>
+                {/* La estación se define por categoría porque es como el
+                    restaurante ya organiza su carta; la cocina y la barra
+                    filtran sus comandas con esto. */}
+                <select
+                  value={cat.station}
+                  onChange={(e) => setCategoryStation(cat.id, e.target.value as Station)}
+                  title="Quién prepara esta categoría"
+                  className="rounded-lg border border-neutral-300 px-2 py-1 text-xs"
+                >
+                  <option value="kitchen">{STATION_LABELS.kitchen}</option>
+                  <option value="bar">{STATION_LABELS.bar}</option>
+                </select>
+              </div>
               <div className="flex gap-3 text-sm">
                 <button
                   onClick={() => {
