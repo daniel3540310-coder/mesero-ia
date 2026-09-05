@@ -482,7 +482,9 @@ export function OrdersPage() {
               <p className="font-medium">
                 {order.order_type === "delivery"
                   ? `🛵 ${order.customer_name ?? "Domicilio"}`
-                  : order.table?.label ?? "Mesa desconocida"}
+                  : // El nombre vivo primero, por si la mesa se renombró; el guardado
+                    // al crear la comanda entra cuando la mesa ya no existe.
+                    order.table?.label ?? order.table_label ?? "Mesa desconocida"}
                 {order.diners ? (
                   <span className="ml-1 text-xs font-normal text-neutral-500">
                     · {order.diners} pers.
@@ -548,7 +550,10 @@ export function OrdersPage() {
           )}
         </div>
 
-        {order.order_type === "delivery" && (
+        {/* El despacho es tarea de caja, no de los puestos de preparación: en
+            Cocina y Barra solo estorbaría, y cualquiera podría mandar al
+            repartidor un pedido cuya otra mitad sigue sin salir. */}
+        {order.order_type === "delivery" && station === "all" && (
           <div className="mb-3 space-y-1 rounded-lg border border-neutral-200 bg-neutral-50 p-2 text-xs">
             {order.customer_address && (
               <p className="text-neutral-600">{order.customer_address}</p>
@@ -700,7 +705,7 @@ export function OrdersPage() {
                 disabled={updatingIds.has(order.id)}
                 className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60"
               >
-                {order.table_label ?? order.table?.label ?? "Mesa"}
+                {order.table?.label ?? order.table_label ?? "Mesa"}
                 {order.payment_method ? ` · ${PAYMENT_LABELS[order.payment_method]}` : ""}
                 {" · "}
                 {updatingIds.has(order.id) ? "Cerrando…" : "Cobrar y cerrar"}
