@@ -104,6 +104,9 @@ export function OrdersPage() {
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(new Set());
   // Vista activa: la barra no debería ver hamburguesas ni la cocina cocteles.
   const [station, setStation] = useState<StationFilter>("all");
+  // Fallos al cambiar el estado de una comanda. Antes no existía: un rechazo
+  // de permisos dejaba el botón mudo y nadie sabía por qué.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const {
     supported: soundSupported,
@@ -288,12 +291,29 @@ export function OrdersPage() {
     }
 
     setUpdatingIds((prev) => new Set(prev).add(orderId));
+    setActionError(null);
     try {
-      await supabase
+      // Se piden de vuelta las filas tocadas a propósito. Un rechazo de RLS no
+      // llega como error: PostgREST responde éxito con cero filas, y el botón
+      // parecería no hacer nada. Así el fallo se ve en vez de esconderse.
+      const { data, error } = await supabase
         .from("order_items")
         .update({ status })
-        .in("id", targets.map((i) => i.id));
+        .in("id", targets.map((i) => i.id))
+        .select("id");
+
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        setActionError(
+          "No se pudo actualizar la comanda. Vuelve a iniciar sesión e inténtalo de nuevo."
+        );
+        return;
+      }
       await load();
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "No se pudo actualizar la comanda."
+      );
     } finally {
       setUpdatingIds((prev) => {
         const next = new Set(prev);
@@ -328,7 +348,14 @@ export function OrdersPage() {
       byStatus.set(item.status, [...(byStatus.get(item.status) ?? []), item.id]);
     }
     for (const [status, ids] of byStatus) {
-      await supabase.from("order_items").update({ status }).in("id", ids);
+      const { error } = await supabase
+        .from("order_items")
+        .update({ status })
+        .in("id", ids);
+      if (error) {
+        setActionError("No se pudo deshacer el cambio.");
+        return;
+      }
     }
     await load();
   }
@@ -678,6 +705,11 @@ export function OrdersPage() {
         </p>
       )}
       {voiceError && <p className="mb-3 text-xs text-red-600">{voiceError}</p>}
+      {actionError && (
+        <p className="mb-3 rounded-lg border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+          {actionError}
+        </p>
+      )}
 
       {voiceFeedback && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm">
