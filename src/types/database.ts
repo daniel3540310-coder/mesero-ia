@@ -11,7 +11,9 @@ export interface Restaurant {
   logo_url: string | null;
   status: RestaurantStatus;
   /** WhatsApp del repartidor. Vacío = el despacho abre el selector de contactos. */
-  courier_phone: string | null;
+  delivery_phone: string | null;
+  /** Con esto apagado, el enlace público avisa que solo se atiende en el local. */
+  delivery_enabled: boolean;
   /** Perfil de Google Maps al que se invita a reseñar tras pagar. */
   google_review_url: string | null;
   created_at: string;

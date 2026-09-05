@@ -453,7 +453,7 @@ export function OrdersPage() {
   // Capturados tras la guarda: TypeScript no arrastra el estrechamiento de
   // `restaurant` dentro de renderOrder, que es una función anidada.
   const restaurantName = restaurant.name;
-  const courierPhone = restaurant.courier_phone;
+  const deliveryPhone = restaurant.delivery_phone;
 
   function renderOrder(order: OrderView) {
     const number = orderNumbers.get(order.id);
@@ -557,7 +557,7 @@ export function OrdersPage() {
               <a
                 href={whatsappUrl(
                   buildCourierMessage(order, order.items, restaurantName),
-                  courierPhone
+                  deliveryPhone
                 )}
                 target="_blank"
                 rel="noopener noreferrer"

@@ -47,6 +47,30 @@ export function DeliveryPage() {
     );
   }
 
+  // El restaurante apagó el domicilio: se dice claramente en vez de dejar que
+  // el cliente arme un pedido que nadie va a recibir.
+  if (!restaurant.delivery_enabled) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4 text-center">
+        <div className="max-w-sm">
+          <p className="text-4xl">🛵</p>
+          <h1 className="mt-3 text-xl font-semibold">{restaurant.name}</h1>
+          <p className="mt-2 text-neutral-500">
+            Por ahora no estamos tomando pedidos a domicilio. Te esperamos en el local.
+          </p>
+          {restaurant.phone && (
+            <a
+              href={`tel:${restaurant.phone.replace(/\D/g, "")}`}
+              className="mt-4 inline-block rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-100"
+            >
+              Llamar al restaurante
+            </a>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <CartProvider scope={`delivery:${restaurant.id}`} products={menu.products}>
       <DeliveryOrder restaurant={restaurant} menu={menu} slug={slug!} />
