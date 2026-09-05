@@ -8,6 +8,7 @@ const links = [
   { to: "/dashboard/ai-info", label: "Info para la IA" },
   { to: "/dashboard/tables", label: "Mesas" },
   { to: "/dashboard/orders", label: "Cocina" },
+  { to: "/dashboard/cashier", label: "Caja" },
   { to: "/dashboard/reports", label: "Reportes" },
 ];
 

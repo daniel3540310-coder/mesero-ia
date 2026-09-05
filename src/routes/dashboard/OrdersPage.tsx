@@ -6,6 +6,7 @@ import { useSpeechRecognition } from "../../hooks/useSpeechRecognition";
 import { hasWakeWord, parseKitchenCommand } from "../../lib/voiceCommands";
 import { buildCourierMessage, navigationUrl, normalizePhone, whatsappUrl } from "../../lib/courierDispatch";
 import { PAYMENT_LABELS } from "../../types/database";
+import { closeSingleOrder, closeTableAccount } from "../../lib/billing";
 import type {
   Category,
   Order,
@@ -303,18 +304,18 @@ export function OrdersPage() {
   }
 
   /** Cobra y cierra: la pantalla del comensal cambia sola a la despedida. */
-  async function closeBill(orderId: string) {
-    setUpdatingIds((prev) => new Set(prev).add(orderId));
+  async function closeBill(order: OrderView) {
+    setUpdatingIds((prev) => new Set(prev).add(order.id));
     try {
-      await supabase
-        .from("orders")
-        .update({ bill_status: "pagada", closed_at: new Date().toISOString() })
-        .eq("id", orderId);
+      // Por mesa, no por comanda: una mesa pide varias rondas y cerrar solo
+      // una la dejaría a medias, sin la pantalla de agradecimiento.
+      if (order.table_id) await closeTableAccount(order.table_id);
+      else await closeSingleOrder(order.id);
       await load();
     } finally {
       setUpdatingIds((prev) => {
         const next = new Set(prev);
-        next.delete(orderId);
+        next.delete(order.id);
         return next;
       });
     }
@@ -701,7 +702,7 @@ export function OrdersPage() {
             {billRequests.map((order) => (
               <button
                 key={order.id}
-                onClick={() => closeBill(order.id)}
+                onClick={() => closeBill(order)}
                 disabled={updatingIds.has(order.id)}
                 className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60"
               >

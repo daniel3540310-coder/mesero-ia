@@ -11,6 +11,7 @@ import { AiInfoPage } from "./routes/dashboard/AiInfoPage";
 import { TablesPage } from "./routes/dashboard/TablesPage";
 import { OrdersPage } from "./routes/dashboard/OrdersPage";
 import { ReportsPage } from "./routes/dashboard/ReportsPage";
+import { CashierPage } from "./routes/dashboard/CashierPage";
 import { ClientMenuPage } from "./routes/client/ClientMenuPage";
 import { DeliveryPage } from "./routes/client/DeliveryPage";
 
@@ -45,6 +46,7 @@ export default function App() {
             <Route path="ai-info" element={<AiInfoPage />} />
             <Route path="tables" element={<TablesPage />} />
             <Route path="orders" element={<OrdersPage />} />
+            <Route path="cashier" element={<CashierPage />} />
             <Route path="reports" element={<ReportsPage />} />
           </Route>
 
